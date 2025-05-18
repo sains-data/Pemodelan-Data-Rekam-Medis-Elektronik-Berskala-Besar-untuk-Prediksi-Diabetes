@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Virtual Environments
+venv/
+ENV/
+env/
+
+
+# Model files
+*.pkl
+*.h5
+*.model
+*.joblib
+*.sav
+
+# Log files
+*.log
+logs/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE specific files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.spyderproject
+.spyproject
+*.swp
+*~
+
+# Project specific
+d
+data/processed/
+data/interim/
+credentials/
+config.ini
+secrets.yaml

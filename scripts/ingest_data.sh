@@ -60,7 +60,7 @@ mkdir -p ${BRONZE_DIR}
 log "INFO: Mengunduh dataset Pima Indians Diabetes"
 curl --retry 3 --retry-delay 5 --max-time 30 --silent --show-error \
   -o "${BRONZE_DIR}/pima_${DATA_DATE}.csv" \
-  https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv \
+  https://raw.githubusercontent.com/sains-data/Pemodelan-Data-Rekam-Medis-Elektronik-Berskala-Besar-untuk-Prediksi-Diabetes/refs/heads/main/data/raw/diabetes.csv\
   >> ${LOG_FILE} 2>&1
 
 # Validasi file pima
@@ -70,7 +70,7 @@ validate_file "${BRONZE_DIR}/pima_${DATA_DATE}.csv" 4000
 log "INFO: Mencoba mengunduh dataset wearable (opsional)"
 curl --retry 3 --retry-delay 5 --max-time 30 --silent --show-error \
   -o "${BRONZE_DIR}/wearable_${DATA_DATE}.csv" \
-  https://your-data-source.com/personal_health_data.csv \
+  https://raw.githubusercontent.com/sains-data/Pemodelan-Data-Rekam-Medis-Elektronik-Berskala-Besar-untuk-Prediksi-Diabetes/refs/heads/main/data/raw/personal_health_data.csv \
   >> ${LOG_FILE} 2>&1 || log "WARNING: Dataset wearable tidak tersedia, melanjutkan tanpa wearable data"
 
 # Check if we were able to download wearable data
