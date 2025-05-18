@@ -1,0 +1,162 @@
+# Docker Compose untuk Sistem Big Data Prediksi Diabetes
+
+version: '3.8'
+
+services:
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    environment:
+      - CLUSTER_NAME=hadoop-cluster
+    ports:
+      - "9870:9870"
+    volumes:
+      - hdfs_namenode:/hadoop/dfs/name
+      - ./data:/data
+    networks:
+      - hadoop-net
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+    ports:
+      - "9864:9864"
+    volumes:
+      - hdfs_datanode:/hadoop/dfs/data
+      - ./data:/data
+    depends_on:
+      - namenode
+    networks:
+      - hadoop-net
+
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    ports:
+      - "8088:8088"
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+    depends_on:
+      - namenode
+    networks:
+      - hadoop-net
+
+  nodemanager:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager
+    depends_on:
+      - resourcemanager
+    networks:
+      - hadoop-net
+
+  spark-master:
+    image: bitnami/spark:latest
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    volumes:
+      - ./scripts:/scripts
+    networks:
+      - hadoop-net
+
+  spark-worker:
+    image: bitnami/spark:latest
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./scripts:/scripts
+    networks:
+      - hadoop-net
+
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    environment:
+      - HIVE_CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - HIVE_METASTORE_URIS=thrift://hive-metastore:9083
+    ports:
+      - "9083:9083"
+    depends_on:
+      - namenode
+    networks:
+      - hadoop-net
+
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    command: "/opt/hive/bin/hive --service hiveserver2"
+    ports:
+      - "10000:10000"
+    depends_on:
+      - hive-metastore
+    networks:
+      - hadoop-net
+
+  superset:
+    image: apache/superset
+    container_name: superset
+    ports:
+      - "8081:8088"
+    depends_on:
+      - hive-server
+    networks:
+      - hadoop-net
+
+  airflow:
+    image: puckel/docker-airflow:1.10.9
+    container_name: airflow
+    restart: always
+    ports:
+      - "8089:8080"
+    environment:
+      - LOAD_EX=y
+      - EXECUTOR=SequentialExecutor
+    volumes:
+      - ./airflow/dags:/usr/local/airflow/dags
+      - ./logs:/usr/local/airflow/logs
+    depends_on:
+      - spark-master
+      - hive-server
+    networks:
+      - hadoop-net
+
+  ambari:
+    image: uhopper/hadoop-ambari
+    container_name: ambari
+    ports:
+      - "8082:8080"
+    networks:
+      - hadoop-net
+
+volumes:
+  hdfs_namenode:
+  hdfs_datanode:
+
+networks:
+  hadoop-net:
+
+
+# /opt/diabetes_prediction/
+# ├── docker-compose.yml
+# ├── data/
+# │   ├── bronze/
+# │   ├── silver/
+# │   ├── gold/
+# │   └── logs/
+# ├── scripts/
+# │   ├── ingest_data.sh
+# │   └── etl_spark_job.py
+# └── airflow/
+#     └── dags/
+#         └── dag_diabetes.py
