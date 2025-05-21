@@ -84,10 +84,10 @@ http://localhost:8089
 ### Monitoring
 
 - **Airflow UI**: http://localhost:8089 (monitoring pipeline)
-- **Spark UI**: http://localhost:8080 (monitoring Spark jobs)
+- **Spark Master UI**: http://localhost:8081 (monitoring Spark Master)
+- **Spark Worker UI**: http://localhost:8082 (monitoring Spark Worker)
 - **HDFS UI**: http://localhost:9870 (monitoring storage)
-- **Superset**: http://localhost:8081 (visualisasi dan dashboards)
-
+- **Superset**: http://localhost:8083 (visualisasi dan dashboards)
 ## Skalabilitas
 
 Sistem ini dirancang untuk skala besar:

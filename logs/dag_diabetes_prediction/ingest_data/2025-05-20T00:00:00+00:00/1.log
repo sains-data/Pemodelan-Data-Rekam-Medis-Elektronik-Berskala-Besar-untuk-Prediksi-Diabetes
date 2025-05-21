@@ -1,0 +1,33 @@
+[2025-05-21 08:13:14,580] {{taskinstance.py:655}} INFO - Dependencies all met for <TaskInstance: dag_diabetes_prediction.ingest_data 2025-05-20T00:00:00+00:00 [queued]>
+[2025-05-21 08:13:14,776] {{taskinstance.py:655}} INFO - Dependencies all met for <TaskInstance: dag_diabetes_prediction.ingest_data 2025-05-20T00:00:00+00:00 [queued]>
+[2025-05-21 08:13:14,778] {{taskinstance.py:866}} INFO - 
+--------------------------------------------------------------------------------
+[2025-05-21 08:13:14,782] {{taskinstance.py:867}} INFO - Starting attempt 1 of 3
+[2025-05-21 08:13:14,783] {{taskinstance.py:868}} INFO - 
+--------------------------------------------------------------------------------
+[2025-05-21 08:13:14,887] {{taskinstance.py:887}} INFO - Executing <Task(BashOperator): ingest_data> on 2025-05-20T00:00:00+00:00
+[2025-05-21 08:13:14,929] {{standard_task_runner.py:53}} INFO - Started process 169 to run task
+[2025-05-21 08:13:15,876] {{logging_mixin.py:112}} INFO - Running %s on host %s <TaskInstance: dag_diabetes_prediction.ingest_data 2025-05-20T00:00:00+00:00 [running]> e3e68f19426d
+[2025-05-21 08:13:16,059] {{taskinstance.py:1128}} ERROR - bash /scripts/ingest_data.sh
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.7/site-packages/airflow/models/taskinstance.py", line 951, in _run_raw_task
+    self.render_templates(context=context)
+  File "/usr/local/lib/python3.7/site-packages/airflow/models/taskinstance.py", line 1385, in render_templates
+    self.task.render_template_fields(context)
+  File "/usr/local/lib/python3.7/site-packages/airflow/models/baseoperator.py", line 710, in render_template_fields
+    self._do_render_template_fields(self, self.template_fields, context, jinja_env, set())
+  File "/usr/local/lib/python3.7/site-packages/airflow/models/baseoperator.py", line 717, in _do_render_template_fields
+    rendered_content = self.render_template(content, context, jinja_env, seen_oids)
+  File "/usr/local/lib/python3.7/site-packages/airflow/models/baseoperator.py", line 744, in render_template
+    return jinja_env.get_template(content).render(**context)
+  File "/usr/local/lib/python3.7/site-packages/jinja2/environment.py", line 830, in get_template
+    return self._load_template(name, self.make_globals(globals))
+  File "/usr/local/lib/python3.7/site-packages/jinja2/environment.py", line 804, in _load_template
+    template = self.loader.load(self, name, globals)
+  File "/usr/local/lib/python3.7/site-packages/jinja2/loaders.py", line 113, in load
+    source, filename, uptodate = self.get_source(environment, name)
+  File "/usr/local/lib/python3.7/site-packages/jinja2/loaders.py", line 187, in get_source
+    raise TemplateNotFound(template)
+jinja2.exceptions.TemplateNotFound: bash /scripts/ingest_data.sh
+[2025-05-21 08:13:16,094] {{taskinstance.py:1151}} INFO - Marking task as UP_FOR_RETRY
+[2025-05-21 08:13:24,356] {{logging_mixin.py:112}} INFO - [2025-05-21 08:13:24,354] {{local_task_job.py:103}} INFO - Task exited with return code 1

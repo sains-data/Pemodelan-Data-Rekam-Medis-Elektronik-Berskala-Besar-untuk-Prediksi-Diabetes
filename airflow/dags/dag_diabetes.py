@@ -2,7 +2,6 @@ from airflow import DAG
 from airflow.operators.bash_operator import BashOperator
 from airflow.operators.python_operator import PythonOperator
 from airflow.operators.email_operator import EmailOperator
-from airflow.sensors.filesystem import FileSensor
 from airflow.models import Variable
 from datetime import datetime, timedelta
 import os
@@ -42,16 +41,6 @@ check_dirs = BashOperator(
 ingest = BashOperator(
     task_id='ingest_data',
     bash_command='bash /scripts/ingest_data.sh',
-    dag=dag
-)
-
-# Sensor untuk memastikan file data tersedia setelah ingest
-check_data_available = FileSensor(
-    task_id='check_data_available',
-    filepath='/data/bronze/',
-    poke_interval=60,  # cek setiap 60 detik
-    timeout=600,       # timeout setelah 10 menit
-    mode='poke',       # mode poke lebih efisien untuk interval pendek
     dag=dag
 )
 
@@ -97,4 +86,4 @@ success_notification = EmailOperator(
 )
 
 # Set dependency graph
-check_dirs >> ingest >> check_data_available >> validate_data >> transform >> predict >> generate_report >> success_notification
+check_dirs >> ingest  >> validate_data >> transform >> predict >> generate_report >> success_notification
