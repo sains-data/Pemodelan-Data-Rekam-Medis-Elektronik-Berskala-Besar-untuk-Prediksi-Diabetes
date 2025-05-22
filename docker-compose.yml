@@ -135,10 +135,18 @@ services:
       - HIVE_METASTORE_DB_NAME=hive
       - HIVE_METASTORE_DB_USER=hive
       - HIVE_METASTORE_DB_PASSWORD=hive
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
     ports:
       - "10000:10000"  # HiveServer2 port (host:container)
     depends_on:
       - hive-metastore
+      - namenode
+      - datanode
+      - resourcemanager
+      - nodemanager
+      - spark-master
+      - spark-worker
+      
     networks:
       - hadoop-net
     volumes:
@@ -160,6 +168,8 @@ services:
       - HIVE_METASTORE_DB_NAME=hive
       - HIVE_METASTORE_DB_USER=hive
       - HIVE_METASTORE_DB_PASSWORD=hive
+      - HIVE_METASTORE_DB_SCHEMA=public
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
     depends_on:
       - postgres-metastore
     networks:
@@ -174,23 +184,33 @@ services:
       start_period: 10s
 
   superset:
-    image: apache/superset
+    build:
+      context: ./superset
+      dockerfile: dockerfile
     container_name: superset
     ports:
-      - "8083:8088"  # Superset UI (host:container)
-    depends_on:
-      - hive-server
+      - "8083:8088"
     environment:
-      - SUPERSET_SECRET_KEY=323213231rfacfq3rqcfR3R12W
-      - SUPERSET_ENV=production
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=admin
       - ADMIN_EMAIL=admin@example.com
+      - SUPERSET_CONFIG_PATH=/app/superset_config.py
+      - PYTHONPATH=/app
     volumes:
       - superset_home:/app/superset_home
     networks:
       - hadoop-net
     restart: unless-stopped
+    depends_on:
+      - hive-server
+
+# Hive connection info for Superset:
+# In Superset UI, add a new database with:
+# Database: hive
+# SQLAlchemy URI: hive://hive@hive-server:10000/default
+# (pyhive driver is installed in the custom Dockerfile)
+#
+# Make sure 'hive-server' matches the service name and port in this compose file.
 
   airflow-postgres:
     image: postgres:12
@@ -205,13 +225,14 @@ services:
       - hadoop-net
 
   airflow:
-    image: puckel/docker-airflow:1.10.9
+    build: 
+      context: ./airflow
+      dockerfile: Dockerfile
     container_name: airflow
     restart: unless-stopped
     ports:
       - "8089:8080"  # Airflow UI (host:container)
     environment:
-      - LOAD_EX=y
       - POSTGRES_HOST=airflow-postgres
       - POSTGRES_USER=airflow
       - POSTGRES_PASSWORD=airflow
@@ -219,7 +240,8 @@ services:
     volumes:
       - ./airflow/dags:/usr/local/airflow/dags
       - ./logs:/usr/local/airflow/logs
-      - ./data:/data
+      - ./data:/usr/local/airflow/data
+      - ./scripts:/usr/local/airflow/scripts
     depends_on:
       - airflow-postgres
       - spark-master

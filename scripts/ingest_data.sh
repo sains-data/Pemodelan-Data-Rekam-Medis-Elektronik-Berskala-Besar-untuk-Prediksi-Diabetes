@@ -5,8 +5,8 @@ set -e
 set -o pipefail
 
 # Konfigurasi
-BRONZE_DIR="/data/bronze"
-LOG_DIR="/data/logs"
+BRONZE_DIR="/usr/local/airflow/data/bronze"
+LOG_DIR="/usr/local/airflow/data/logs"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="${LOG_DIR}/ingest_data_${TIMESTAMP}.log"
 DATA_DATE=$(date +%F)

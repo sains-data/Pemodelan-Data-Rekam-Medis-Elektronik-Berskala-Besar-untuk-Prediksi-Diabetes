@@ -1,170 +1,111 @@
-from pyspark.sql import SparkSession
-from pyspark.ml.feature import VectorAssembler, StandardScaler, Imputer
-from pyspark.sql.functions import col, when, isnan, count, min, max, avg, stddev
+import pandas as pd
 import os
 import logging
+from sklearn.preprocessing import StandardScaler
 
-# Konfigurasi logging
+# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/data/logs/etl_spark_job.log'),
+        logging.FileHandler('/usr/local/airflow/data/logs/etl_spark_job.log'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger('etl_spark_job')
 
-def create_spark_session():
-    """Inisialisasi SparkSession dengan konfigurasi yang optimal"""
-    logger.info("Inisialisasi Spark Session")
-    return (SparkSession.builder
-            .appName("ETL-Diabetes-Pipeline")
-            .config("spark.executor.memory", "4g")
-            .config("spark.driver.memory", "2g")
-            .config("spark.sql.shuffle.partitions", "10")
-            .config("spark.default.parallelism", "10")
-            .getOrCreate())
+BRONZE_PATH = "/usr/local/airflow/data/bronze"
+SILVER_PATH = "/usr/local/airflow/data/silver/diabetes_processed.csv"
 
-def load_data(spark):
-    """Load data dari bronze zone"""
-    logger.info("Loading data dari bronze zone")
-    
-    try:
-        # Load dataset utama
-        logger.info("Loading dataset Pima diabetes")
-        pima = spark.read.csv("/data/bronze/pima_*.csv", 
-                            header=False, 
-                            inferSchema=True)
-        
-        # Rename kolom untuk kemudahan
-        columns = ["Pregnancies", "Glucose", "BloodPressure", "SkinThickness", 
-                "Insulin", "BMI", "DiabetesPedigreeFunction", "Age", "Outcome"]
-        for i, col_name in enumerate(columns):
-            pima = pima.withColumnRenamed(f"_c{i}", col_name)
-        
-        # Load data wearable jika tersedia
-        wearable_path = "/data/bronze/wearable_*.csv"
-        if os.path.exists(wearable_path.replace('*', '')):
-            logger.info("Loading dataset wearable")
-            wearable = spark.read.csv(wearable_path, 
-                                    header=True, 
-                                    inferSchema=True)
-            # TODO: Join dengan data pima jika memungkinkan
-        
-        logger.info(f"Data loaded successfully. Row count: {pima.count()}")
-        return pima
-        
-    except Exception as e:
-        logger.error(f"Error loading data: {str(e)}")
-        raise
+COLUMNS = [
+    "Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
+    "Insulin", "BMI", "DiabetesPedigreeFunction", "Age", "Outcome"
+]
+NUMERIC_COLS = ["Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI"]
+
+
+def load_data():
+    """Load and concatenate all Pima CSV files from bronze zone."""
+    logger.info("Loading data from bronze zone with pandas")
+    pima_files = [f for f in os.listdir(BRONZE_PATH) if f.startswith("pima_") and f.endswith(".csv")]
+    if not pima_files:
+        logger.error("No pima diabetes data files found in bronze zone")
+        return None
+    logger.info(f"Found files: {pima_files}")
+    dfs = []
+    for f in pima_files:
+        try:
+            df = pd.read_csv(os.path.join(BRONZE_PATH, f), header=None, dtype=str)
+            dfs.append(df)
+        except Exception as e:
+            logger.error(f"Failed to read {f}: {e}")
+    df = pd.concat(dfs, ignore_index=True)
+    df.columns = COLUMNS
+    # Convert columns to numeric, coerce errors to NaN
+    for col in COLUMNS:
+        if col != "DiabetesPedigreeFunction":
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        else:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    logger.info(f"Data loaded successfully. Row count: {len(df)}")
+    return df
+
 
 def clean_data(df):
-    """Membersihkan data"""
-    logger.info("Membersihkan data")
-    
-    # Log statistik data awal
-    logger.info(f"Row count before cleaning: {df.count()}")
-    
-    # Hitung missing values
+    """Clean data: impute missing, drop duplicates, filter invalid."""
+    logger.info("Cleaning data")
+    logger.info(f"Row count before cleaning: {len(df)}")
     logger.info("Missing value statistics:")
-    df.select([count(when(col(c).isNull() | isnan(col(c)), c)).alias(c) for c in df.columns]).show()
-    
-    # Handle missing values dengan Imputer
-    logger.info("Applying imputation for missing values")
-    numeric_cols = ["Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI"]
-    imputer = Imputer(
-        inputCols=numeric_cols,
-        outputCols=[f"{col}_imputed" for col in numeric_cols]
-    )
-    df = imputer.fit(df).transform(df)
-    
-    # Drop duplikasi
-    df = df.dropDuplicates()
-    
-    # Filter data yang tidak valid
-    df = df.filter((col("Glucose") > 0) & 
-                 (col("BloodPressure") > 0) & 
-                 (col("BMI") > 0))
-    
-    # Log statistik data akhir
-    logger.info(f"Row count after cleaning: {df.count()}")
-    
+    logger.info(df.isnull().sum())
+    # Impute missing values with mean for numeric columns
+    for col_name in NUMERIC_COLS:
+        df[col_name] = df[col_name].fillna(df[col_name].mean())
+    df = df.drop_duplicates()
+    df = df[(df["Glucose"] > 0) & (df["BloodPressure"] > 0) & (df["BMI"] > 0)]
+    logger.info(f"Row count after cleaning: {len(df)}")
     return df
+
 
 def transform_features(df):
-    """Transformasi fitur untuk model ML"""
-    logger.info("Transformasi fitur")
-    
-    # Feature engineering 
-    # Contoh: BMI categories
-    df = df.withColumn("BMI_Category", 
-                      when(col("BMI") < 18.5, 0)
-                      .when((col("BMI") >= 18.5) & (col("BMI") < 25), 1)
-                      .when((col("BMI") >= 25) & (col("BMI") < 30), 2)
-                      .otherwise(3))
-    
-    # Feature columns untuk vectorization
-    feature_cols = ["Pregnancies", "Glucose_imputed", "BloodPressure_imputed", 
-                   "SkinThickness_imputed", "Insulin_imputed", "BMI_imputed", 
-                   "DiabetesPedigreeFunction", "Age", "BMI_Category"]
-    
-    # Vectorization
-    assembler = VectorAssembler(inputCols=feature_cols, outputCol="features_raw")
-    df = assembler.transform(df)
-    
-    # Standardization
-    scaler = StandardScaler(inputCol="features_raw", outputCol="features", 
-                          withStd=True, withMean=True)
-    df = scaler.fit(df).transform(df)
-    
+    """Feature engineering and scaling."""
+    logger.info("Transforming features")
+    # BMI Category
+    df["BMI_Category"] = pd.cut(
+        df["BMI"],
+        bins=[-float('inf'), 18.5, 25, 30, float('inf')],
+        labels=[0, 1, 2, 3]
+    ).astype(int)
+    feature_cols = [
+        "Pregnancies", "Glucose", "BloodPressure", "SkinThickness", "Insulin",
+        "BMI", "DiabetesPedigreeFunction", "Age", "BMI_Category"
+    ]
+    scaler = StandardScaler()
+    df[feature_cols] = scaler.fit_transform(df[feature_cols])
+    logger.info("Feature transformation and scaling complete")
     return df
 
+
 def save_to_silver(df):
-    """Save processed data to silver zone"""
-    logger.info("Saving data to silver zone")
-    
-    # Partition by year-month
-    try:
-        output_path = "/data/silver/diabetes_processed"
-        
-        # Save dataset 
-        df.write.mode("overwrite").parquet(output_path)
-        
-        # Also save a sample for easy analysis
-        df.sample(fraction=0.1, seed=42).write.mode("overwrite").csv(f"{output_path}_sample.csv")
-        
-        logger.info(f"Data saved to silver zone: {output_path}")
-        
-    except Exception as e:
-        logger.error(f"Error saving data: {str(e)}")
-        raise
+    """Save processed data to silver zone as CSV."""
+    os.makedirs(os.path.dirname(SILVER_PATH), exist_ok=True)
+    df.to_csv(SILVER_PATH, index=False)
+    logger.info(f"Data saved to silver zone: {SILVER_PATH}")
+
 
 def main():
-    """Main ETL process"""
-    logger.info("Starting ETL process")
-    
-    spark = create_spark_session()
-    
+    logger.info("Starting ETL process (pandas)")
     try:
-        # Extract
-        df = load_data(spark)
-        
-        # Transform
+        df = load_data()
+        if df is None:
+            logger.error("No data available for ETL")
+            return
         df = clean_data(df)
         df = transform_features(df)
-        
-        # Load
         save_to_silver(df)
-        
         logger.info("ETL process completed successfully")
-        
     except Exception as e:
         logger.error(f"ETL process failed: {str(e)}")
         raise
-    finally:
-        spark.stop()
-        logger.info("Spark session stopped")
 
 if __name__ == "__main__":
     main()

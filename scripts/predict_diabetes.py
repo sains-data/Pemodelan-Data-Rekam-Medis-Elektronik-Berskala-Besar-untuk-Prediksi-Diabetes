@@ -1,227 +1,162 @@
 #!/usr/bin/env python3
 # filepath: /mnt/2A28ACA028AC6C8F/Programming/bigdata/Prediksi_Diabetes/scripts/predict_diabetes.py
 
-from pyspark.sql import SparkSession
-from pyspark.ml.classification import RandomForestClassifier, LogisticRegression, GBTClassifier
-from pyspark.ml.evaluation import BinaryClassificationEvaluator, MulticlassClassificationEvaluator
-from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
-from pyspark.ml.feature import VectorIndexer
-from pyspark.sql.functions import col, udf, current_timestamp, lit
-from pyspark.sql.types import StringType, TimestampType
-import logging
+import pandas as pd
+import numpy as np
 import os
+import logging
 import json
 from datetime import datetime
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_score, recall_score
+from sklearn.preprocessing import StandardScaler
 
-# Konfigurasi logging
+# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/data/logs/predict_diabetes.log'),
+        logging.FileHandler('/usr/local/airflow/data/logs/predict_diabetes.log'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger('predict_diabetes')
 
-def create_spark_session():
-    """Inisialisasi SparkSession dengan konfigurasi optimal"""
-    logger.info("Inisialisasi Spark Session")
-    return (SparkSession.builder
-            .appName("Diabetes-Prediction")
-            .config("spark.executor.memory", "4g")
-            .config("spark.driver.memory", "2g")
-            .config("spark.sql.shuffle.partitions", "10")
-            .getOrCreate())
+SILVER_PATH = "/usr/local/airflow/data/silver/diabetes_processed.csv"
+GOLD_PATH = "/usr/local/airflow/data/gold"
 
-def load_processed_data(spark):
-    """Load data yang sudah diproses dari Silver Zone"""
-    logger.info("Loading processed data dari silver zone")
-    
+
+def load_processed_data():
+    logger.info("Loading processed data from silver zone (pandas)")
     try:
-        df = spark.read.parquet("/data/silver/diabetes_processed")
-        logger.info(f"Data loaded successfully. Row count: {df.count()}")
+        df = pd.read_csv(SILVER_PATH)
+        logger.info(f"Data loaded successfully. Row count: {len(df)}")
+        # Clean: drop rows with any NaN or inf values
+        df = df.replace([np.inf, -np.inf], np.nan)
+        nan_rows = df.isnull().any(axis=1).sum()
+        if nan_rows > 0:
+            logger.warning(f"Dropping {nan_rows} rows with NaN or inf values from processed data.")
+            df = df.dropna()
+        logger.info(f"Row count after dropping NaN/inf: {len(df)}")
         return df
     except Exception as e:
         logger.error(f"Error loading processed data: {str(e)}")
         raise
 
 def prepare_training_data(df):
-    """Persiapan data untuk training dan testing"""
-    logger.info("Preparing training and testing data")
-    
-    # Feature indexing
-    featureIndexer = VectorIndexer(inputCol="features", 
-                                  outputCol="indexedFeatures", 
-                                  maxCategories=10).fit(df)
-    df = featureIndexer.transform(df)
-    
-    # Split dataset
-    train, test = df.randomSplit([0.8, 0.2], seed=42)
-    logger.info(f"Training set size: {train.count()}, Test set size: {test.count()}")
-    
-    return train, test
+    logger.info("Preparing training and testing data (pandas)")
+    X = df.drop(["Outcome"], axis=1)
+    y = df["Outcome"]
+    train_X, test_X, train_y, test_y = train_test_split(X, y, test_size=0.2, random_state=42)
+    logger.info(f"Training set size: {len(train_X)}, Test set size: {len(test_X)}")
+    return train_X, test_X, train_y, test_y
 
-def train_and_evaluate_models(train_data, test_data):
-    """Train berbagai model dan evaluasi performa"""
-    logger.info("Training and evaluating models")
-    
-    # Binary classification evaluator
-    evaluator = BinaryClassificationEvaluator(
-        labelCol="Outcome", 
-        rawPredictionCol="rawPrediction",
-        metricName="areaUnderROC")
-    
-    # List untuk menyimpan hasil model
+def train_and_evaluate_models(train_X, train_y, test_X, test_y):
+    logger.info("Training and evaluating models (pandas/sklearn)")
     model_results = []
-    
-    # 1. Logistic Regression dengan CrossValidation
+    # 1. Logistic Regression with GridSearchCV
     logger.info("Training Logistic Regression model")
-    lr = LogisticRegression(labelCol="Outcome", featuresCol="indexedFeatures", maxIter=10)
-    
-    paramGrid = ParamGridBuilder() \
-        .addGrid(lr.regParam, [0.01, 0.1, 0.3]) \
-        .addGrid(lr.elasticNetParam, [0.0, 0.5, 0.8]) \
-        .build()
-        
-    crossval_lr = CrossValidator(
-        estimator=lr,
-        estimatorParamMaps=paramGrid,
-        evaluator=evaluator,
-        numFolds=3)
-    
-    cv_model_lr = crossval_lr.fit(train_data)
-    lr_predictions = cv_model_lr.transform(test_data)
-    lr_auc = evaluator.evaluate(lr_predictions)
-    
+    lr = LogisticRegression(max_iter=1000)
+    param_grid = {
+        'C': [0.01, 0.1, 1, 10],
+        'penalty': ['l2'],
+        'solver': ['lbfgs']
+    }
+    grid_lr = GridSearchCV(lr, param_grid, cv=3, scoring='roc_auc')
+    grid_lr.fit(train_X, train_y)
+    lr_pred = grid_lr.predict(test_X)
+    lr_auc = roc_auc_score(test_y, grid_lr.predict_proba(test_X)[:, 1])
     model_results.append({
         "model": "LogisticRegression",
         "auc": lr_auc,
-        "model_object": cv_model_lr
+        "model_object": grid_lr,
+        "pred": lr_pred
     })
     logger.info(f"Logistic Regression AUC: {lr_auc}")
-    
     # 2. Random Forest
     logger.info("Training Random Forest model")
-    rf = RandomForestClassifier(labelCol="Outcome", 
-                             featuresCol="indexedFeatures",
-                             numTrees=20)
-    rf_model = rf.fit(train_data)
-    rf_predictions = rf_model.transform(test_data)
-    rf_auc = evaluator.evaluate(rf_predictions)
-    
+    rf = RandomForestClassifier(n_estimators=20, random_state=42)
+    rf.fit(train_X, train_y)
+    rf_pred = rf.predict(test_X)
+    rf_auc = roc_auc_score(test_y, rf.predict_proba(test_X)[:, 1])
     model_results.append({
         "model": "RandomForest",
         "auc": rf_auc,
-        "model_object": rf_model
+        "model_object": rf,
+        "pred": rf_pred
     })
     logger.info(f"Random Forest AUC: {rf_auc}")
-    
     # 3. Gradient Boosted Trees
-    logger.info("Training GBT model")
-    gbt = GBTClassifier(labelCol="Outcome", 
-                      featuresCol="indexedFeatures",
-                      maxIter=10)
-    gbt_model = gbt.fit(train_data)
-    gbt_predictions = gbt_model.transform(test_data)
-    gbt_auc = evaluator.evaluate(gbt_predictions)
-    
+    logger.info("Training Gradient Boosted Trees model")
+    gbt = GradientBoostingClassifier(n_estimators=10, random_state=42)
+    gbt.fit(train_X, train_y)
+    gbt_pred = gbt.predict(test_X)
+    gbt_auc = roc_auc_score(test_y, gbt.predict_proba(test_X)[:, 1])
     model_results.append({
         "model": "GradientBoostedTrees",
         "auc": gbt_auc,
-        "model_object": gbt_model
+        "model_object": gbt,
+        "pred": gbt_pred
     })
     logger.info(f"GBT AUC: {gbt_auc}")
-    
-    # Sortir dan pilih model terbaik
+    # Select best model
     best_model = sorted(model_results, key=lambda x: x['auc'], reverse=True)[0]
     logger.info(f"Best model: {best_model['model']} with AUC: {best_model['auc']}")
-    
-    return best_model
+    return best_model, test_X, test_y
 
-def save_predictions(model, data, best_model_name):
-    """Generate dan simpan prediksi"""
+def save_predictions(model, X, y, best_model_name):
     logger.info(f"Generating predictions using {best_model_name}")
-    
-    # Add timestamp
-    timestamp_udf = udf(lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), StringType())
-    
-    # Generate predictions
-    predictions = model.transform(data)
-    
-    # Add metadata columns
-    predictions = predictions.withColumn("prediction_time", current_timestamp()) \
-                           .withColumn("model_name", lit(best_model_name))
-    
-    # Select columns untuk output
-    output_data = predictions.select(
-        "Pregnancies", "Glucose_imputed", "BloodPressure_imputed", 
-        "SkinThickness_imputed", "Insulin_imputed", "BMI_imputed",
-        "DiabetesPedigreeFunction", "Age", "Outcome", 
-        "probability", "prediction", "prediction_time", "model_name"
-    )
-    
-    # Save predictions to gold zone
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = f"/data/gold/diabetes_predictions_{timestamp}"
-    
-    output_data.write.mode("overwrite").parquet(output_path)
+    pred_probs = model.predict_proba(X)[:, 1]
+    preds = model.predict(X)
+    output_data = X.copy()
+    output_data["Outcome"] = y
+    output_data["probability"] = pred_probs
+    output_data["prediction"] = preds
+    output_data["prediction_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    output_data["model_name"] = best_model_name
+    output_path = os.path.join(GOLD_PATH, f"diabetes_predictions_{timestamp}.csv")
+    os.makedirs(GOLD_PATH, exist_ok=True)
+    output_data.to_csv(output_path, index=False)
     logger.info(f"Predictions saved to: {output_path}")
-    
-    # Save sample untuk analisis cepat
-    output_data.sample(fraction=0.1, seed=42).write.mode("overwrite").csv(f"{output_path}_sample.csv")
-    
+    # Save sample for quick analysis
+    sample_path = os.path.join(GOLD_PATH, f"diabetes_predictions_{timestamp}_sample.csv")
+    output_data.sample(frac=0.1, random_state=42).to_csv(sample_path, index=False)
     # Save model metrics
-    multiclass_evaluator = MulticlassClassificationEvaluator(
-        labelCol="Outcome", predictionCol="prediction")
-    
     metrics = {
-        "accuracy": multiclass_evaluator.evaluate(output_data, {multiclass_evaluator.metricName: "accuracy"}),
-        "f1": multiclass_evaluator.evaluate(output_data, {multiclass_evaluator.metricName: "f1"}),
-        "precision": multiclass_evaluator.evaluate(output_data, {multiclass_evaluator.metricName: "weightedPrecision"}),
-        "recall": multiclass_evaluator.evaluate(output_data, {multiclass_evaluator.metricName: "weightedRecall"}),
+        "accuracy": accuracy_score(y, preds),
+        "f1": f1_score(y, preds),
+        "precision": precision_score(y, preds),
+        "recall": recall_score(y, preds),
+        "auc": roc_auc_score(y, pred_probs),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "model": best_model_name,
-        "records_processed": output_data.count()
+        "records_processed": len(y)
     }
-    
-    with open(f"/data/gold/metrics_{timestamp}.json", "w") as f:
+    metrics_path = os.path.join(GOLD_PATH, f"metrics_{timestamp}.json")
+    with open(metrics_path, "w") as f:
         json.dump(metrics, f)
-    
     logger.info(f"Model metrics: {metrics}")
     return metrics
 
 def main():
-    """Main prediction process"""
-    logger.info("Starting prediction process")
-    
-    spark = create_spark_session()
-    
+    logger.info("Starting prediction process (pandas/sklearn)")
     try:
-        # Load processed data
-        df = load_processed_data(spark)
-        
-        # Prepare data
-        train_data, test_data = prepare_training_data(df)
-        
-        # Train and select best model
-        best_model_info = train_and_evaluate_models(train_data, test_data)
-        
-        # Generate predictions and save results
+        df = load_processed_data()
+        train_X, test_X, train_y, test_y = prepare_training_data(df)
+        best_model_info, test_X, test_y = train_and_evaluate_models(train_X, train_y, test_X, test_y)
         metrics = save_predictions(
-            best_model_info['model_object'], 
-            df,  # Run prediction on entire dataset
+            best_model_info['model_object'],
+            test_X,
+            test_y,
             best_model_info['model']
         )
-        
         logger.info("Prediction process completed successfully")
-        
     except Exception as e:
         logger.error(f"Prediction process failed: {str(e)}")
         raise
-    finally:
-        spark.stop()
-        logger.info("Spark session stopped")
 
 if __name__ == "__main__":
     main()

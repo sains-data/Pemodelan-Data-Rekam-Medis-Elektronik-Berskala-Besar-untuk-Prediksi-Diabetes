@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 # filepath: /mnt/2A28ACA028AC6C8F/Programming/bigdata/Prediksi_Diabetes/scripts/generate_report.py
 
+import os
+import glob
+import json
+import logging
+from datetime import datetime
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import json
-import os
-from datetime import datetime
-import logging
-import glob
-from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
 from fpdf import FPDF
-import numpy as np
 
-# Konfigurasi logging
+# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/data/logs/generate_report.log'),
+        logging.FileHandler('/usr/local/airflow/logs/generate_report.log'),
         logging.StreamHandler()
     ]
 )
@@ -39,15 +37,6 @@ class DiabetesReportPDF(FPDF):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.cell(0, 10, f'Generated on {timestamp} - Page {self.page_no()}/{{nb}}', 0, 0, 'C')
 
-def create_spark_session():
-    """Inisialisasi SparkSession"""
-    logger.info("Inisialisasi Spark Session")
-    return (SparkSession.builder
-            .appName("Diabetes-Report-Generator")
-            .config("spark.executor.memory", "2g")
-            .config("spark.driver.memory", "1g")
-            .getOrCreate())
-
 def get_latest_file(pattern):
     """Get latest file matching pattern"""
     files = glob.glob(pattern)
@@ -55,43 +44,32 @@ def get_latest_file(pattern):
         return None
     return max(files, key=os.path.getmtime)
 
-def load_prediction_data(spark):
+def load_prediction_data():
     """Load hasil prediksi terbaru"""
     logger.info("Loading latest prediction data")
-    
-    # Find latest prediction directory
-    prediction_dirs = glob.glob("/data/gold/diabetes_predictions_*")
-    prediction_dirs = [d for d in prediction_dirs if os.path.isdir(d)]
-    
-    if not prediction_dirs:
-        logger.error("No prediction data found")
+    # Try both possible gold data locations
+    prediction_files = glob.glob("/usr/local/airflow/data/gold/diabetes_predictions_*.csv")
+    if not prediction_files:
+        prediction_files = glob.glob("/usr/local/airflow/gold/diabetes_predictions_*.csv")
+    if not prediction_files:
+        logger.error("No prediction data found in either /usr/local/airflow/data/gold or /usr/local/airflow/gold")
         return None
-    
-    latest_dir = max(prediction_dirs, key=os.path.getmtime)
-    logger.info(f"Latest prediction dir: {latest_dir}")
-    
-    # Check if sample CSV exists first for faster loading
-    sample_path = f"{latest_dir}_sample.csv"
-    if os.path.exists(sample_path):
-        logger.info(f"Loading prediction sample from {sample_path}")
-        return spark.read.csv(sample_path, header=True, inferSchema=True)
-    
-    # Otherwise load full parquet
-    logger.info(f"Loading predictions from {latest_dir}")
-    return spark.read.parquet(latest_dir)
+    latest_file = max(prediction_files, key=os.path.getmtime)
+    logger.info(f"Latest prediction file: {latest_file}")
+    return pd.read_csv(latest_file)
 
 def load_metrics():
     """Load metrics dari hasil prediksi terbaru"""
     logger.info("Loading model metrics")
-    metrics_files = glob.glob("/data/gold/metrics_*.json")
-    
+    # Try both possible gold data locations
+    metrics_files = glob.glob("/usr/local/airflow/data/gold/metrics_*.json")
     if not metrics_files:
-        logger.warning("No metrics files found")
+        metrics_files = glob.glob("/usr/local/airflow/gold/metrics_*.json")
+    if not metrics_files:
+        logger.warning("No metrics files found in either /usr/local/airflow/data/gold or /usr/local/airflow/gold")
         return {}
-    
     latest_metrics_file = max(metrics_files, key=os.path.getmtime)
     logger.info(f"Loading metrics from {latest_metrics_file}")
-    
     try:
         with open(latest_metrics_file, 'r') as f:
             return json.load(f)
@@ -101,26 +79,22 @@ def load_metrics():
 
 def generate_visualizations(df, output_dir):
     """Generate visualisasi dari data prediksi"""
-    logger.info("Generating visualizations")
+    logger.info("Generating visualizations (pandas)")
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Convert Spark DataFrame to Pandas for visualization
-    pdf = df.toPandas()
     
     # 1. Prediction Distribution Pie Chart
     plt.figure(figsize=(10, 6))
-    counts = pdf['prediction'].value_counts()
-    plt.pie(counts, labels=['Non-Diabetic', 'Diabetic'], autopct='%1.1f%%', colors=['skyblue', 'salmon'])
+    counts = df['prediction'].value_counts()
+    labels = [str(int(l)) for l in counts.index]
+    plt.pie(counts, labels=labels, autopct='%1.1f%%', colors=['skyblue', 'salmon'])
     plt.title('Diabetes Prediction Distribution')
     plt.savefig(f"{output_dir}/prediction_distribution.png")
     plt.close()
     
     # 2. Feature Correlation Heatmap
     plt.figure(figsize=(12, 10))
-    numeric_cols = ['Pregnancies', 'Glucose_imputed', 'BloodPressure_imputed', 
-                   'SkinThickness_imputed', 'Insulin_imputed', 'BMI_imputed', 
-                   'DiabetesPedigreeFunction', 'Age']
-    correlation = pdf[numeric_cols].corr()
+    numeric_cols = [c for c in df.columns if (('imputed' in c or c in ['Pregnancies','DiabetesPedigreeFunction','Age']) and df[c].dtype != 'O')]
+    correlation = df[numeric_cols].corr()
     sns.heatmap(correlation, annot=True, cmap='coolwarm', linewidths=.5)
     plt.title('Feature Correlation Heatmap')
     plt.tight_layout()
@@ -129,12 +103,11 @@ def generate_visualizations(df, output_dir):
     
     # 3. Age vs BMI scatter plot colored by prediction
     plt.figure(figsize=(10, 6))
-    for pred in [0.0, 1.0]:
-        subset = pdf[pdf['prediction'] == pred]
-        label = 'Non-Diabetic' if pred == 0.0 else 'Diabetic'
-        color = 'skyblue' if pred == 0.0 else 'salmon'
-        plt.scatter(subset['Age'], subset['BMI_imputed'], alpha=0.6, 
-                   label=label, color=color)
+    for pred in sorted(df['prediction'].unique()):
+        subset = df[df['prediction'] == pred]
+        label = 'Non-Diabetic' if pred == 0 else 'Diabetic'
+        color = 'skyblue' if pred == 0 else 'salmon'
+        plt.scatter(subset['Age'], subset['BMI'], alpha=0.6, label=label, color=color)
     plt.xlabel('Age')
     plt.ylabel('BMI')
     plt.title('Age vs BMI by Diabetes Prediction')
@@ -145,9 +118,7 @@ def generate_visualizations(df, output_dir):
     
     # 4. Glucose Distribution by Prediction
     plt.figure(figsize=(12, 6))
-    sns.histplot(data=pdf, x='Glucose_imputed', hue='prediction', 
-               multiple='dodge', shrink=0.8, bins=15,
-               palette=['skyblue', 'salmon'])
+    sns.histplot(data=df, x='Glucose', hue='prediction', multiple='dodge', shrink=0.8, bins=15, palette=['skyblue', 'salmon'])
     plt.xlabel('Glucose Level')
     plt.ylabel('Count')
     plt.title('Glucose Distribution by Diabetes Prediction')
@@ -155,13 +126,10 @@ def generate_visualizations(df, output_dir):
     plt.savefig(f"{output_dir}/glucose_distribution.png")
     plt.close()
     
-    # 5. Top Features Importance (Mock - would be better with actual model importances)
+    # 5. Top Features Importance (Mock)
     plt.figure(figsize=(10, 6))
-    features = ['Glucose', 'BMI', 'Age', 'DiabetesPedigreeFunction', 'Insulin', 
-               'BloodPressure', 'Pregnancies', 'SkinThickness']
-    # These are mock importances - ideally should come from the actual model
+    features = ['Glucose', 'BMI', 'Age', 'DiabetesPedigreeFunction', 'Insulin', 'BloodPressure', 'Pregnancies', 'SkinThickness']
     importances = [0.28, 0.22, 0.15, 0.12, 0.10, 0.07, 0.04, 0.02]
-    
     plt.barh(features, importances, color='lightseagreen')
     plt.xlabel('Relative Importance')
     plt.title('Feature Importance for Diabetes Prediction')
@@ -180,40 +148,30 @@ def generate_visualizations(df, output_dir):
 
 def generate_stats_for_report(df):
     """Generate statistics summaries for the report"""
-    logger.info("Calculating statistics for report")
+    logger.info("Calculating statistics for report (pandas)")
     
     stats = {
-        "row_count": df.count(),
-        "prediction_counts": {}
+        "row_count": len(df),
+        "prediction_counts": df['prediction'].value_counts().to_dict()
     }
     
-    # Prediction counts
-    pred_counts = df.groupby("prediction").count().collect()
-    for row in pred_counts:
-        label = "Diabetic" if row["prediction"] == 1.0 else "Non-Diabetic"
-        stats["prediction_counts"][label] = row["count"]
-    
     # Summary statistics for key metrics
-    numeric_cols = ['Glucose_imputed', 'BMI_imputed', 'Age']
-    summary = df.select(numeric_cols).summary("min", "max", "mean").collect()
+    numeric_cols = [c for c in df.columns if c in ['Glucose', 'BMI', 'Age']]
     stats["metrics"] = {}
     
     for col in numeric_cols:
         stats["metrics"][col] = {
-            "min": float(summary[0][col]),
-            "max": float(summary[1][col]),
-            "mean": float(summary[2][col])
+            "min": float(df[col].min()),
+            "max": float(df[col].max()),
+            "mean": float(df[col].mean())
         }
     
     # Age group distribution
-    df = df.withColumn("age_group", 
-                    F.when(F.col("Age") < 30, "< 30")
-                    .when((F.col("Age") >= 30) & (F.col("Age") < 45), "30-45")
-                    .when((F.col("Age") >= 45) & (F.col("Age") < 60), "45-60")
-                    .otherwise(">= 60"))
-    
-    age_dist = df.groupby("age_group").count().collect()
-    stats["age_distribution"] = {row["age_group"]: row["count"] for row in age_dist}
+    bins = [0, 30, 45, 60, np.inf]
+    labels = ['< 30', '30-45', '45-60', '>= 60']
+    df['age_group'] = pd.cut(df['Age'], bins=bins, labels=labels, right=False)
+    age_dist = df['age_group'].value_counts().to_dict()
+    stats["age_distribution"] = age_dist
     
     return stats
 
@@ -222,7 +180,7 @@ def create_pdf_report(metrics, viz_paths, stats):
     logger.info("Creating PDF report")
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = f"/data/gold/diabetes_report_{timestamp}.pdf"
+    report_path = f"/usr/local/airflow/gold/diabetes_report_{timestamp}.pdf"
     
     pdf = DiabetesReportPDF()
     pdf.alias_nb_pages()
@@ -276,7 +234,7 @@ def create_pdf_report(metrics, viz_paths, stats):
     
     # Table rows
     for label, count in counts.items():
-        pdf.cell(90, 10, label, 1, 0)
+        pdf.cell(90, 10, str(label), 1, 0)
         pdf.cell(90, 10, str(count), 1, 1)
     
     pdf.ln(5)
@@ -294,7 +252,7 @@ def create_pdf_report(metrics, viz_paths, stats):
     
     # Table rows
     for age_group, count in age_dist.items():
-        pdf.cell(90, 10, age_group, 1, 0)
+        pdf.cell(90, 10, str(age_group), 1, 0)
         pdf.cell(90, 10, str(count), 1, 1)
     
     pdf.ln(10)
@@ -320,8 +278,7 @@ def create_pdf_report(metrics, viz_paths, stats):
             
             # Add image with proper scaling
             image_path = viz_paths[viz_key]
-            pdf.image(image_path, x=10, y=pdf.get_y(), w=190)
-            pdf.ln(5)
+            pdf.image(image_path, x=10, w=180)
     
     # Conclusion
     pdf.add_page()
@@ -339,41 +296,21 @@ def create_pdf_report(metrics, viz_paths, stats):
 
 def main():
     """Main report generation process"""
-    logger.info("Starting report generation process")
-    
-    spark = create_spark_session()
-    
+    logger.info("Starting report generation process (pandas)")
     try:
-        # Load prediction results
-        df = load_prediction_data(spark)
+        df = load_prediction_data()
         if df is None:
-            logger.error("Could not load prediction data")
+            logger.error("No prediction data available for report generation")
             return
-        
-        # Load model metrics
         metrics = load_metrics()
-        
-        # Create output directory for visualizations
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        viz_output_dir = f"/data/gold/visualizations_{timestamp}"
-        
-        # Generate statistics
+        viz_dir = "/usr/local/airflow/gold"
+        viz_paths = generate_visualizations(df, viz_dir)
         stats = generate_stats_for_report(df)
-        
-        # Generate visualizations
-        viz_paths = generate_visualizations(df, viz_output_dir)
-        
-        # Create PDF report
         report_path = create_pdf_report(metrics, viz_paths, stats)
-        
-        logger.info(f"Report generation completed. Report available at: {report_path}")
-        
+        logger.info(f"Report generated at: {report_path}")
     except Exception as e:
         logger.error(f"Report generation failed: {str(e)}")
         raise
-    finally:
-        spark.stop()
-        logger.info("Spark session stopped")
 
 if __name__ == "__main__":
     main()

@@ -35,15 +35,12 @@ env/
 *.model
 *.joblib
 *.sav
-
 # Log files
 *.log
 logs/
-
 # OS specific
 .DS_Store
 Thumbs.db
-
 # IDE specific files
 .idea/
 .vscode/
@@ -52,10 +49,7 @@ Thumbs.db
 .spyderproject
 .spyproject
 *.swp
-*~
-
 # Project specific
-d
 data/processed/
 data/interim/
 credentials/

@@ -1,0 +1,1 @@
+{"accuracy": 0.8, "f1": 0.6666666666666666, "precision": 0.6590909090909091, "recall": 0.6744186046511628, "auc": 0.867875056999544, "timestamp": "2025-05-22 14:29:09", "model": "RandomForest", "records_processed": 145}

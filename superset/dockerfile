@@ -1,0 +1,20 @@
+FROM apache/superset
+
+USER root
+
+# Install system dependencies for mysqlclient
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    default-libmysqlclient-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install MySQL, Hive drivers, and thrift for Hive
+RUN pip install mysqlclient pyhive thrift sasl thrift-sasl
+
+COPY ./superset-init.sh /superset-init.sh
+COPY superset_config.py /app/
+ENV SUPERSET_CONFIG_PATH=/app/superset_config.py
+
+USER superset
+ENTRYPOINT ["/superset-init.sh"]
