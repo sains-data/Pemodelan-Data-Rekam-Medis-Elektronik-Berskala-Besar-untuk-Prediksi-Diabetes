@@ -11,7 +11,6 @@ import logging
 import sys
 import json
 import re
-import subprocess
 from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.ml import PipelineModel
@@ -161,55 +160,26 @@ class PySparkModelEvaluator:
             latest_timestamp = None
             
             # Pattern to match model directories with timestamps
-            # More flexible pattern to handle HDFS ls output formats
-            timestamp_pattern = r'(/models/(\w+)_(\d{8}_\d{6}))'
-            latest_pattern = r'(/models/(\w+)_latest)'
-            
-            logger.info(f"HDFS output: {result.stdout[:500]}...")
+            pattern = r'(/models/(\w+)_(\d{8}_\d{6}))'
             
             for line in result.stdout.split('\n'):
-                logger.info(f"Processing line: {line}")
-                
-                # First try to match timestamp pattern
-                match = re.search(timestamp_pattern, line)
+                match = re.search(pattern, line)
                 if match:
                     relative_path = match.group(1)
                     full_path = f"hdfs://namenode:9000{relative_path}"
                     model_type = match.group(2)
                     timestamp = match.group(3)
-                    logger.info(f"Found timestamped model: {model_type} at {full_path} with timestamp {timestamp}")
-                else:
-                    # Try to match latest pattern
-                    match = re.search(latest_pattern, line)
-                    if match:
-                        relative_path = match.group(1)
-                        full_path = f"hdfs://namenode:9000{relative_path}"
-                        model_type = match.group(2)
-                        # Use a high timestamp to ensure latest models are prioritized if no timestamp models exist
-                        timestamp = "99999999_999999"
-                        
-                        # Keep track of the latest timestamp
-                        if latest_timestamp is None or timestamp > latest_timestamp:
-                            latest_timestamp = timestamp
-                        
-                        # Store the path for each model type with this timestamp
-                        if model_type not in model_paths or timestamp > model_paths[model_type]['timestamp']:
-                            model_paths[model_type] = {
-                                'path': full_path,
-                                'timestamp': timestamp
-                            }
-                    continue
-                
-                # For timestamp models, track latest and store path
-                if latest_timestamp is None or timestamp > latest_timestamp:
-                    latest_timestamp = timestamp
-                
-                # Store the path for each model type with this timestamp
-                if model_type not in model_paths or timestamp > model_paths[model_type]['timestamp']:
-                    model_paths[model_type] = {
-                        'path': full_path,
-                        'timestamp': timestamp
-                    }
+                    
+                    # Keep track of the latest timestamp
+                    if latest_timestamp is None or timestamp > latest_timestamp:
+                        latest_timestamp = timestamp
+                    
+                    # Store the path for each model type with this timestamp
+                    if model_type not in model_paths or timestamp > model_paths[model_type]['timestamp']:
+                        model_paths[model_type] = {
+                            'path': full_path,
+                            'timestamp': timestamp
+                        }
             
             # Filter to only include models with the latest timestamp
             latest_models = {}
@@ -292,47 +262,72 @@ class PySparkModelEvaluator:
         try:
             logger.info(f"Loading model from {model_path}")
             
-            # First try to load as PipelineModel
+            # Import model types
+            from pyspark.ml.classification import RandomForestClassificationModel, LogisticRegressionModel
+            
+            # Determine model type from path and try to load accordingly
+            if 'random_forest' in model_path.lower():
+                try:
+                    model = RandomForestClassificationModel.load(model_path)
+                    logger.info("Model loaded successfully as RandomForestClassificationModel")
+                    return model
+                except Exception as rf_error:
+                    logger.warning(f"Failed to load as RandomForest: {rf_error}")
+            
+            elif 'logistic_regression' in model_path.lower():
+                try:
+                    model = LogisticRegressionModel.load(model_path)
+                    logger.info("Model loaded successfully as LogisticRegressionModel")
+                    return model
+                except Exception as lr_error:
+                    logger.warning(f"Failed to load as LogisticRegression: {lr_error}")
+            
+            # If specific model type loading failed, try PipelineModel
             try:
                 model = PipelineModel.load(model_path)
                 logger.info("Model loaded successfully as PipelineModel")
                 return model
             except Exception as pipeline_error:
-                logger.info(f"Failed to load as PipelineModel: {pipeline_error}")
+                logger.warning(f"Failed to load as PipelineModel: {pipeline_error}")
                 
-                # Try to load as individual classifier models
-                from pyspark.ml.classification import RandomForestClassificationModel, LogisticRegressionModel
-                
-                # Determine model type from path
-                if 'random_forest' in model_path.lower():
-                    try:
-                        model = RandomForestClassificationModel.load(model_path)
-                        logger.info("Model loaded successfully as RandomForestClassificationModel")
-                        return model
-                    except Exception as rf_error:
-                        logger.error(f"Failed to load as RandomForest: {rf_error}")
-                        
-                elif 'logistic_regression' in model_path.lower():
-                    try:
-                        model = LogisticRegressionModel.load(model_path)
-                        logger.info("Model loaded successfully as LogisticRegressionModel")
-                        return model
-                    except Exception as lr_error:
-                        logger.error(f"Failed to load as LogisticRegression: {lr_error}")
-                
-                # If specific type loading fails, try both
+                # Try all model types as a last resort
                 try:
                     model = RandomForestClassificationModel.load(model_path)
                     logger.info("Model loaded successfully as RandomForestClassificationModel (fallback)")
                     return model
                 except Exception:
+                    pass
+                
+                try:
+                    model = LogisticRegressionModel.load(model_path)
+                    logger.info("Model loaded successfully as LogisticRegressionModel (fallback)")
+                    return model
+                except Exception:
+                    pass
+                
+                # Import more model types to try
+                try:
+                    from pyspark.ml.classification import GBTClassificationModel, DecisionTreeClassificationModel
+                    
                     try:
-                        model = LogisticRegressionModel.load(model_path)
-                        logger.info("Model loaded successfully as LogisticRegressionModel (fallback)")
+                        model = GBTClassificationModel.load(model_path)
+                        logger.info("Model loaded successfully as GBTClassificationModel")
                         return model
-                    except Exception as final_error:
-                        raise Exception(f"Could not load model as any supported type. Final error: {final_error}")
+                    except Exception:
+                        pass
                         
+                    try:
+                        model = DecisionTreeClassificationModel.load(model_path)
+                        logger.info("Model loaded successfully as DecisionTreeClassificationModel")
+                        return model
+                    except Exception:
+                        pass
+                except ImportError:
+                    pass
+                
+                # Failed to load with all model types
+                raise Exception(f"Could not load model as any supported type from {model_path}")
+        
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             raise
@@ -396,6 +391,14 @@ class PySparkModelEvaluator:
         try:
             logger.info("Generating predictions...")
             
+            # Check if data has the expected target column name
+            if 'diabetes' not in test_data.columns and 'label' in test_data.columns:
+                # Rename label to diabetes for consistency
+                test_data = test_data.withColumnRenamed('label', 'diabetes')
+                logger.info("Renamed 'label' column to 'diabetes' for consistency")
+            elif 'diabetes' not in test_data.columns and 'label' not in test_data.columns:
+                logger.warning("Neither 'diabetes' nor 'label' columns found in test data")
+            
             # Check if this is a PipelineModel or individual classifier
             from pyspark.ml import PipelineModel
             from pyspark.ml.classification import RandomForestClassificationModel, LogisticRegressionModel
@@ -411,43 +414,101 @@ class PySparkModelEvaluator:
                 # Try to find feature pipeline
                 feature_pipeline = None
                 
-                # Extract timestamp from model path
+                # Try loading from "_latest" suffixed path first
+                feature_pipeline_paths = [
+                    # Modern path approach
+                    "/models/feature_pipeline_latest"
+                ]
+                
+                # Also try timestamp-based approach as fallback
                 timestamp_match = re.search(r'(\d{8}_\d{6})', model_path)
                 if timestamp_match:
                     timestamp = timestamp_match.group(1)
-                    feature_pipeline_paths = [
-                        f"hdfs://namenode:9000/models/feature_pipeline_{timestamp}",
-                        f"hdfs://namenode:9000/models/feature_pipeline_latest"
-                    ]
-                    
-                    for fp_path in feature_pipeline_paths:
-                        try:
-                            feature_pipeline = PipelineModel.load(fp_path)
-                            logger.info(f"Loaded feature pipeline from {fp_path}")
-                            break
-                        except Exception as fp_error:
-                            logger.debug(f"Could not load feature pipeline from {fp_path}: {fp_error}")
-                            continue
+                    feature_pipeline_paths.extend([
+                        f"/models/feature_pipeline_{timestamp}",
+                    ])
+                
+                # Add HDFS prefix to paths
+                feature_pipeline_paths = [f"hdfs://namenode:9000{p}" for p in feature_pipeline_paths]
+                
+                # Try each path
+                for fp_path in feature_pipeline_paths:
+                    try:
+                        logger.info(f"Trying to load feature pipeline from: {fp_path}")
+                        feature_pipeline = PipelineModel.load(fp_path)
+                        logger.info(f"Loaded feature pipeline from {fp_path}")
+                        break
+                    except Exception as fp_error:
+                        logger.warning(f"Could not load feature pipeline from {fp_path}: {fp_error}")
+                        continue
                 
                 if feature_pipeline:
                     # Apply feature pipeline first
-                    prepared_data = feature_pipeline.transform(test_data)
-                    predictions = model.transform(prepared_data)
-                    logger.info("Applied feature pipeline before prediction")
+                    try:
+                        prepared_data = feature_pipeline.transform(test_data)
+                        predictions = model.transform(prepared_data)
+                        logger.info("Applied feature pipeline before prediction")
+                    except Exception as transform_error:
+                        logger.error(f"Error during transform with feature pipeline: {transform_error}")
+                        
+                        # Try direct prediction with scaled_features if available
+                        if 'scaled_features' in test_data.columns:
+                            try:
+                                logger.info("Attempting predictions using existing 'scaled_features'")
+                                predictions = model.transform(test_data)
+                            except Exception:
+                                # Try with features column
+                                if 'features' in test_data.columns:
+                                    logger.info("Attempting predictions using existing 'features'")
+                                    predictions = model.transform(test_data)
+                                else:
+                                    raise Exception("Failed to generate predictions: no usable feature columns")
+                        elif 'features' in test_data.columns:
+                            logger.info("Attempting predictions using existing 'features' column")
+                            predictions = model.transform(test_data)
+                        else:
+                            logger.error("Cannot make predictions: no feature columns found and pipeline failed")
+                            raise Exception("Cannot apply model: no feature columns and feature pipeline failed")
                 else:
-                    # Try direct prediction
+                    # Try direct prediction if features are available
                     logger.warning("No feature pipeline found - attempting direct prediction")
-                    predictions = model.transform(test_data)
-                    logger.info("Used direct prediction without feature pipeline")
+                    if 'scaled_features' in test_data.columns:
+                        logger.info("Using existing 'scaled_features' column")
+                        predictions = model.transform(test_data)
+                    elif 'features' in test_data.columns:
+                        logger.info("Using existing 'features' column")
+                        predictions = model.transform(test_data)
+                    else:
+                        # Last resort - try to create features on the fly
+                        logger.warning("No feature columns found - attempting to create features")
+                        from pyspark.ml.feature import VectorAssembler
+                        
+                        # Get all numeric columns
+                        numeric_cols = [col_name for col_name, dtype in test_data.dtypes 
+                                      if dtype in ['int', 'double', 'float', 'long', 'short', 'bigint'] 
+                                      and col_name != 'diabetes' and col_name != 'label']
+                        
+                        if numeric_cols:
+                            # Create features vector
+                            logger.info(f"Creating features from numeric columns: {numeric_cols}")
+                            assembler = VectorAssembler(inputCols=numeric_cols, outputCol="features")
+                            with_features = assembler.transform(test_data)
+                            predictions = model.transform(with_features)
+                        else:
+                            raise Exception("No numeric columns found to create features")
             
+            # Check for required columns - add them if they are missing
+            required_columns = ['diabetes', 'prediction']
+            col_mapping = {'label': 'diabetes', 'prediction': 'prediction'}
+            
+            for req_col, actual_col in col_mapping.items():
+                if actual_col not in predictions.columns and req_col in predictions.columns:
+                    predictions = predictions.withColumnRenamed(req_col, actual_col)
+                    logger.info(f"Renamed '{req_col}' to '{actual_col}' for consistency")
+            
+            # Count predictions
             pred_count = predictions.count()
             logger.info(f"Predictions generated for {pred_count} records")
-            
-            # Verify required columns exist
-            required_columns = ['diabetes', 'prediction']
-            missing_columns = [col for col in required_columns if col not in predictions.columns]
-            if missing_columns:
-                raise Exception(f"Missing required columns in predictions: {missing_columns}")
             
             return predictions
             

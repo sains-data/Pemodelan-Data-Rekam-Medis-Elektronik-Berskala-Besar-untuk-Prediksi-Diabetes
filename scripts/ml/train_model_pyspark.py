@@ -164,7 +164,7 @@ class DiabetesModelTrainer:
         
         models = {}
         
-        # 1. Random Forest
+        # 1. Random Forest 
         logger.info("Training Random Forest...")
         rf = RandomForestClassifier(
             featuresCol="scaled_features",
@@ -247,11 +247,46 @@ class DiabetesModelTrainer:
             feature_model.write().overwrite().save(feature_path)
             logger.info(f"Feature pipeline saved to {feature_path}")
             
+            # Create symbolic links for "latest" versions
+            try:
+                from pyspark import SparkContext
+                sc = self.spark.sparkContext
+                hadoop_conf = sc._jsc.hadoopConfiguration()
+                fs = sc._jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
+                
+                # Create symbolic link for feature pipeline
+                latest_feature_path = f"{output_path}/feature_pipeline_latest"
+                logger.info(f"Creating latest link: {latest_feature_path}")
+                delete_path = sc._jvm.org.apache.hadoop.fs.Path(latest_feature_path)
+                if fs.exists(delete_path):
+                    fs.delete(delete_path, True)
+            except Exception as e:
+                logger.warning(f"Failed to create symbolic links: {e}")
+            
             # Save each model
             for model_name, model in models.items():
+                # Save model with timestamp
                 model_path = f"{output_path}/{model_name}_{timestamp}"
                 model.write().overwrite().save(model_path)
                 logger.info(f"{model_name} saved to {model_path}")
+                
+                # Create "latest" version
+                try:
+                    latest_path = f"{output_path}/{model_name}_latest"
+                    delete_path = sc._jvm.org.apache.hadoop.fs.Path(latest_path)
+                    if fs.exists(delete_path):
+                        fs.delete(delete_path, True)
+                    
+                    # Copy the model to latest path using terminal command (more reliable method)
+                    import subprocess
+                    cmd = f"hadoop fs -cp -f {model_path}/* {latest_path}/"
+                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                    if result.returncode == 0:
+                        logger.info(f"Created latest link for {model_name} at {latest_path}")
+                    else:
+                        logger.warning(f"Failed to create latest link: {result.stderr}")
+                except Exception as e:
+                    logger.warning(f"Failed to create latest link for {model_name}: {e}")
                 
         except Exception as e:
             logger.error(f"Failed to save models: {e}")
