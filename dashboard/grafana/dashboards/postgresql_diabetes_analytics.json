@@ -1,0 +1,413 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "PostgreSQL Diabetes Prediction Analytics",
+    "tags": ["diabetes", "postgresql", "healthcare", "analytics"],
+    "style": "dark",
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Real-time Health Metrics",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "SELECT metric_value as value, metric_name as metric FROM analytics.latest_metrics WHERE metric_name IN ('total_records', 'diabetic_count', 'avg_glucose', 'avg_bmi')",
+            "refId": "A",
+            "datasource": {
+              "type": "postgres",
+              "uid": "postgresql_warehouse"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "displayMode": "list",
+              "orientation": "horizontal"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Risk Level Distribution",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "SELECT health_risk_level as metric, patient_count as value FROM analytics.risk_level_analysis ORDER BY patient_count DESC",
+            "refId": "A",
+            "datasource": {
+              "type": "postgres",
+              "uid": "postgresql_warehouse"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              }
+            },
+            "mappings": []
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Daily Processing Statistics",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "SELECT date as time, total_records, diabetic_count, non_diabetic_count FROM analytics.enhanced_daily_stats ORDER BY date",
+            "refId": "A",
+            "datasource": {
+              "type": "postgres",
+              "uid": "postgresql_warehouse"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 4,
+        "title": "Age Group Analysis",
+        "type": "barchart",
+        "targets": [
+          {
+            "expr": "SELECT age_group, total_count, diabetic_count, diabetes_rate FROM analytics.age_group_analysis ORDER BY age_group",
+            "refId": "A",
+            "datasource": {
+              "type": "postgres",
+              "uid": "postgresql_warehouse"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "displayMode": "list",
+              "orientation": "horizontal"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        }
+      },
+      {
+        "id": 5,
+        "title": "BMI Category Analysis",
+        "type": "barchart",
+        "targets": [
+          {
+            "expr": "SELECT bmi_category, total_count, diabetic_count, diabetes_rate FROM analytics.bmi_category_analysis ORDER BY diabetes_rate DESC",
+            "refId": "A",
+            "datasource": {
+              "type": "postgres",
+              "uid": "postgresql_warehouse"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "displayMode": "list",
+              "orientation": "horizontal"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        }
+      },
+      {
+        "id": 6,
+        "title": "Intervention Priority Analysis",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "SELECT intervention_priority, patient_count, percentage, diabetic_count, avg_risk_score, avg_prediction_confidence FROM analytics.intervention_priority_analysis ORDER BY CASE intervention_priority WHEN 'Immediate' THEN 1 WHEN 'Soon' THEN 2 WHEN 'Routine' THEN 3 WHEN 'Monitor' THEN 4 ELSE 5 END",
+            "refId": "A",
+            "datasource": {
+              "type": "postgres",
+              "uid": "postgresql_warehouse"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 24
+        }
+      },
+      {
+        "id": 7,
+        "title": "Feature Correlation Insights",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "SELECT feature_pair, avg_interaction, correlation_with_diabetes FROM analytics.feature_correlation_insights ORDER BY correlation_with_diabetes DESC",
+            "refId": "A",
+            "datasource": {
+              "type": "postgres",
+              "uid": "postgresql_warehouse"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.3
+                },
+                {
+                  "color": "red",
+                  "value": 0.7
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 32
+        }
+      },
+      {
+        "id": 8,
+        "title": "Data Quality Metrics",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "SELECT COUNT(*) * 100.0 / (SELECT COUNT(*) FROM bronze.diabetes_clinical) as data_completeness FROM silver.diabetes_cleaned WHERE is_valid = true",
+            "refId": "A",
+            "datasource": {
+              "type": "postgres",
+              "uid": "postgresql_warehouse"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "max": 100,
+            "min": 0,
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 70
+                },
+                {
+                  "color": "green",
+                  "value": 90
+                }
+              ]
+            },
+            "unit": "percent"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 32
+        }
+      }
+    ],
+    "time": {
+      "from": "now-7d",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": []
+    },
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "refresh": "30s",
+    "schemaVersion": 30,
+    "version": 1,
+    "links": []
+  }
+}

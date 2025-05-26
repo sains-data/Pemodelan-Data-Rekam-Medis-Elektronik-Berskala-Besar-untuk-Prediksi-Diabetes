@@ -1,0 +1,151 @@
+# =============================================================================
+# CODE OWNERS - DIABETES PREDICTION PIPELINE
+# =============================================================================
+# Project: Big Data Pipeline for Diabetes Prediction
+# Team: Kelompok 8 RA
+# =============================================================================
+#
+# This file defines code ownership for the diabetes prediction pipeline.
+# Code owners are automatically requested for review when files in their
+# areas of responsibility are modified.
+#
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# =============================================================================
+# GLOBAL OWNERS
+# =============================================================================
+# Global owners for all files (fallback)
+* @team-kelompok8-ra
+
+# =============================================================================
+# CORE INFRASTRUCTURE
+# =============================================================================
+# Docker and container configurations
+docker/ @infrastructure-team @team-kelompok8-ra
+docker-compose.yml @infrastructure-team @team-kelompok8-ra
+Dockerfile* @infrastructure-team @team-kelompok8-ra
+
+# Environment and setup scripts
+.env.example @infrastructure-team @team-kelompok8-ra
+setup_env.sh @infrastructure-team @team-kelompok8-ra
+setup.sh @infrastructure-team @team-kelompok8-ra
+Makefile @infrastructure-team @team-kelompok8-ra
+
+# =============================================================================
+# DATA ENGINEERING
+# =============================================================================
+# ETL and data processing scripts
+scripts/ @data-engineering-team @team-kelompok8-ra
+scripts/ingestion/ @data-ingestion-lead @data-engineering-team
+scripts/transform/ @data-transformation-lead @data-engineering-team
+scripts/ml/ @ml-engineering-team @data-engineering-team
+
+# Airflow DAGs and configurations
+airflow/ @airflow-team @data-engineering-team
+airflow/dags/ @airflow-lead @data-engineering-team
+
+# Hive DDL and data warehouse scripts
+hive/ @data-warehouse-team @data-engineering-team
+
+# =============================================================================
+# MACHINE LEARNING
+# =============================================================================
+# ML models and training scripts
+models/ @ml-engineering-team @team-kelompok8-ra
+scripts/ml/ @ml-lead @ml-engineering-team
+
+# =============================================================================
+# MONITORING & OBSERVABILITY
+# =============================================================================
+# Monitoring configurations
+dashboard/ @monitoring-team @team-kelompok8-ra
+dashboard/grafana/ @grafana-admin @monitoring-team
+dashboard/prometheus/ @prometheus-admin @monitoring-team
+
+# =============================================================================
+# DOCUMENTATION
+# =============================================================================
+# Main documentation files
+README.md @documentation-team @team-kelompok8-ra
+DEPLOYMENT_GUIDE.md @infrastructure-team @documentation-team
+CONTRIBUTING.md @documentation-team @team-kelompok8-ra
+SECURITY.md @security-team @team-kelompok8-ra
+
+# Documentation directory
+docs/ @documentation-team @team-kelompok8-ra
+
+# =============================================================================
+# TESTING
+# =============================================================================
+# Test configurations and scripts
+tests/ @qa-team @team-kelompok8-ra
+pytest.ini @qa-lead @qa-team
+scripts/run_pipeline_tests.sh @qa-team @data-engineering-team
+
+# =============================================================================
+# CI/CD & GITHUB WORKFLOWS
+# =============================================================================
+# GitHub workflows and CI/CD
+.github/ @devops-team @team-kelompok8-ra
+.github/workflows/ @ci-cd-lead @devops-team
+
+# =============================================================================
+# DATA ASSETS
+# =============================================================================
+# Sample data and datasets
+data/ @data-steward @data-engineering-team
+data/*.csv @data-steward @data-quality-team
+
+# =============================================================================
+# SECURITY & SECRETS
+# =============================================================================
+# Security-related files (require security team review)
+SECURITY.md @security-team @team-kelompok8-ra
+.gitignore @security-team @team-kelompok8-ra
+
+# =============================================================================
+# SPECIFIC FILE OVERRIDES
+# =============================================================================
+# Critical configuration files requiring multiple approvals
+docker-compose.yml @infrastructure-lead @security-team @team-kelompok8-ra
+.env.example @security-team @infrastructure-team @team-kelompok8-ra
+
+# Main DAG file requires both Airflow and ML team approval
+airflow/dags/diabetes_etl_pipeline.py @airflow-lead @ml-lead @data-engineering-team
+
+# Core ETL job requires data engineering lead approval
+scripts/transform/etl_spark_job.py @data-transformation-lead @data-engineering-team
+
+# Model training script requires ML team lead approval
+scripts/ml/train_model.py @ml-lead @ml-engineering-team
+
+# =============================================================================
+# TEAM DEFINITIONS (for reference)
+# =============================================================================
+#
+# Replace these with actual GitHub usernames:
+#
+# @team-kelompok8-ra - Main project team
+# @infrastructure-team - Infrastructure and DevOps
+# @data-engineering-team - Data engineering specialists
+# @ml-engineering-team - Machine learning engineers
+# @qa-team - Quality assurance and testing
+# @documentation-team - Documentation maintainers
+# @security-team - Security reviewers
+# @monitoring-team - Monitoring and observability
+#
+# Individual roles:
+# @infrastructure-lead
+# @data-ingestion-lead
+# @data-transformation-lead
+# @ml-lead
+# @airflow-lead
+# @qa-lead
+# @ci-cd-lead
+# @grafana-admin
+# @prometheus-admin
+# @data-steward
+# @data-quality-team
+# @security-lead
+#
+# =============================================================================

@@ -1,0 +1,167 @@
+# =============================================================================
+# DEPENDABOT CONFIGURATION
+# =============================================================================
+# Project: Big Data Pipeline for Diabetes Prediction
+# Team: Kelompok 8 RA
+# =============================================================================
+
+version: 2
+updates:
+  # =============================================================================
+  # PYTHON DEPENDENCIES
+  # =============================================================================
+  
+  # Airflow Dependencies
+  - package-ecosystem: "pip"
+    directory: "/docker/airflow"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    target-branch: "develop"
+    reviewers:
+      - "data-engineering-team"
+    assignees:
+      - "airflow-lead"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "airflow"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore major version updates for stable dependencies
+      - dependency-name: "apache-airflow"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pandas"
+        update-types: ["version-update:semver-major"]
+
+  # Spark Dependencies  
+  - package-ecosystem: "pip"
+    directory: "/docker/spark"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+    open-pull-requests-limit: 5
+    target-branch: "develop"
+    reviewers:
+      - "data-engineering-team"
+    assignees:
+      - "spark-lead"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "spark"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      - dependency-name: "pyspark"
+        update-types: ["version-update:semver-major"]
+
+  # =============================================================================
+  # DOCKER DEPENDENCIES
+  # =============================================================================
+  
+  # Docker Base Images
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+    open-pull-requests-limit: 3
+    target-branch: "develop"
+    reviewers:
+      - "infrastructure-team"
+    assignees:
+      - "infrastructure-lead"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "infrastructure"
+
+  # Airflow Docker
+  - package-ecosystem: "docker"
+    directory: "/docker/airflow"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:00"
+    open-pull-requests-limit: 2
+    target-branch: "develop"
+    reviewers:
+      - "infrastructure-team"
+      - "data-engineering-team"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "airflow"
+
+  # =============================================================================
+  # GITHUB ACTIONS
+  # =============================================================================
+  
+  # GitHub Actions Workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:00"
+    open-pull-requests-limit: 3
+    target-branch: "develop"
+    reviewers:
+      - "devops-team"
+      - "infrastructure-team"
+    assignees:
+      - "ci-cd-lead"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci-cd"
+
+  # =============================================================================
+  # CONFIGURATION OPTIONS
+  # =============================================================================
+
+# Global Configuration Notes:
+# 
+# Schedule Options:
+# - daily: Every day at the specified time
+# - weekly: Every week on the specified day
+# - monthly: Every month on the specified date
+# 
+# Time Format: "HH:MM" in UTC
+# 
+# Update Types:
+# - version-update:semver-patch: 1.0.0 to 1.0.1
+# - version-update:semver-minor: 1.0.0 to 1.1.0  
+# - version-update:semver-major: 1.0.0 to 2.0.0
+#
+# Dependency Types:
+# - direct: Dependencies explicitly listed in requirements
+# - indirect: Transitive dependencies
+# - all: Both direct and indirect (default)
+#
+# Target Branch Strategy:
+# - All updates target 'develop' branch first
+# - After testing, they can be merged to 'main'
+# - This ensures stability of main branch

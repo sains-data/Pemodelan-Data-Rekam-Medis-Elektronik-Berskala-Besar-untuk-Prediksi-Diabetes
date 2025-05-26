@@ -1,0 +1,3 @@
+# This file ensures that the silver directory is tracked in Git
+# Silver layer: Cleaned and normalized data
+# Files in this directory are ignored by .gitignore but the directory structure is preserved

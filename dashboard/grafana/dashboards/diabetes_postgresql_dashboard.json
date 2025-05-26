@@ -1,0 +1,115 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Diabetes Prediction Analytics - PostgreSQL Dashboard",
+    "tags": ["diabetes", "postgresql", "warehouse", "health"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Total Records",
+        "type": "stat",
+        "datasource": "PostgreSQL Warehouse",
+        "targets": [
+          {
+            "query": "SELECT COUNT(*) as total_records FROM gold.diabetes_features;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "displayMode": "basic",
+              "orientation": "horizontal"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Diabetic Cases",
+        "type": "stat",
+        "datasource": "PostgreSQL Warehouse",
+        "targets": [
+          {
+            "query": "SELECT COUNT(*) as diabetic_count FROM gold.diabetes_features WHERE outcome = 1;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 100 },
+                { "color": "red", "value": 200 }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Diabetes Distribution",
+        "type": "piechart",
+        "datasource": "PostgreSQL Warehouse",
+        "targets": [
+          {
+            "query": "SELECT CASE WHEN outcome = 1 THEN 'Diabetes' ELSE 'No Diabetes' END as category, COUNT(*) as count FROM silver.diabetes_clean GROUP BY outcome;",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 4
+        }
+      },
+      {
+        "id": 4,
+        "title": "Age Group Analysis",
+        "type": "table",
+        "datasource": "PostgreSQL Warehouse",
+        "targets": [
+          {
+            "query": "SELECT age_group, total_count, diabetes_count, diabetes_rate FROM analytics.age_group_analysis ORDER BY CASE WHEN age_group = '18-29' THEN 1 WHEN age_group = '30-39' THEN 2 WHEN age_group = '40-49' THEN 3 WHEN age_group = '50-59' THEN 4 WHEN age_group = '60+' THEN 5 ELSE 6 END;",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 4
+        }
+      }
+    ],
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

@@ -1,0 +1,265 @@
+services:
+  # HDFS NameNode
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: ${HDFS_NAMENODE_HOST}
+    restart: always
+    ports:
+      - "${HDFS_NAMENODE_HTTP_PORT}:9870"
+      - "${HDFS_NAMENODE_PORT}:9000"
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+      - ./data:/opt/data
+    environment:
+      - CLUSTER_NAME=${CLUSTER_NAME}
+      - CORE_CONF_fs_defaultFS=${CORE_CONF_fs_defaultFS}
+    env_file:
+      - ./.env
+      - ./docker/hadoop/hadoop.env
+    networks:
+      - diabetes-network
+
+  # HDFS DataNode
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    restart: always
+    ports:
+      - "${HDFS_DATANODE_HTTP_PORT}:9864"
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+    environment:
+      - SERVICE_PRECONDITION=${HDFS_NAMENODE_HOST}:${HDFS_NAMENODE_HTTP_PORT}
+      - CORE_CONF_fs_defaultFS=${CORE_CONF_fs_defaultFS}
+    env_file:
+      - ./.env
+      - ./docker/hadoop/hadoop.env
+    networks:
+      - diabetes-network
+    depends_on:
+      - namenode
+
+  # Spark Master
+  spark-master:
+    image: bde2020/spark-master:3.3.0-hadoop3.3
+    container_name: ${SPARK_MASTER_HOST}
+    restart: always
+    ports:
+      - "${SPARK_MASTER_WEBUI_PORT}:8080"
+      - "${SPARK_MASTER_PORT}:7077"
+    volumes:
+      - ./scripts:/opt/spark/scripts
+      - ./models:/opt/spark/models
+      - ./data:/opt/spark/data
+    environment:
+      - INIT_DAEMON_STEP=setup_spark
+      - SPARK_CONF_spark_sql_warehouse_dir=${SPARK_CONF_spark_sql_warehouse_dir}
+      - SPARK_CONF_spark_hadoop_fs_defaultFS=${SPARK_CONF_spark_hadoop_fs_defaultFS}
+      - SPARK_CONF_spark_serializer=${SPARK_CONF_spark_serializer}
+      - SPARK_CONF_spark_sql_adaptive_enabled=${SPARK_CONF_spark_sql_adaptive_enabled}
+      - SPARK_CONF_spark_sql_adaptive_coalescePartitions_enabled=${SPARK_CONF_spark_sql_adaptive_coalescePartitions_enabled}
+      - SPARK_CONF_spark_eventLog_enabled=${SPARK_CONF_spark_eventLog_enabled}
+      - SPARK_CONF_spark_eventLog_dir=${SPARK_CONF_spark_eventLog_dir}
+    env_file:
+      - ./.env
+    networks:
+      - diabetes-network
+    depends_on:
+      - namenode
+
+  # Spark Worker
+  spark-worker:
+    image: bde2020/spark-worker:3.3.0-hadoop3.3
+    container_name: spark-worker
+    restart: always
+    ports:
+      - "${SPARK_WORKER_WEBUI_PORT}:8081"
+    volumes:
+      - ./scripts:/opt/spark/scripts
+      - ./models:/opt/spark/models
+      - ./data:/opt/spark/data
+    environment:
+      - SPARK_MASTER=spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES}
+      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY}
+      - SPARK_CONF_spark_sql_warehouse_dir=${SPARK_CONF_spark_sql_warehouse_dir}
+      - SPARK_CONF_spark_hadoop_fs_defaultFS=${SPARK_CONF_spark_hadoop_fs_defaultFS}
+    env_file:
+      - ./.env
+    networks:
+      - diabetes-network
+    depends_on:
+      - spark-master
+
+  # PostgreSQL for Airflow
+  airflow-postgres:
+    image: postgres:13
+    container_name: airflow-postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=${AIRFLOW_POSTGRES_USER}
+      - POSTGRES_PASSWORD=${AIRFLOW_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${AIRFLOW_POSTGRES_DB}
+    volumes:
+      - airflow_postgresql:/var/lib/postgresql/data
+    env_file:
+      - ./.env
+    networks:
+      - diabetes-network
+
+  # PostgreSQL Data Warehouse (Lightweight Hive Alternative)
+  postgres-warehouse:
+    image: postgres:13
+    container_name: postgres-warehouse
+    restart: always
+    ports:
+      - "${POSTGRES_WAREHOUSE_PORT}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_WAREHOUSE_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_WAREHOUSE_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_WAREHOUSE_DB}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      - POSTGRES_MULTIPLE_DATABASES=grafana,monitoring
+      - TZ=UTC
+    volumes:
+      - postgres_warehouse_data:/var/lib/postgresql/data
+      - ./scripts/sql:/docker-entrypoint-initdb.d:ro
+      - ./logs:/var/log/postgresql
+    command: >
+      postgres -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+    env_file:
+      - ./.env
+    networks:
+      - diabetes-network
+
+  # Airflow Webserver
+  airflow:
+    build:
+      context: ./docker/airflow
+      dockerfile: Dockerfile
+    container_name: airflow-webserver
+    restart: always
+    depends_on:
+      - airflow-postgres
+      - namenode
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=${AIRFLOW__CORE__EXECUTOR}
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=${AIRFLOW__CORE__SQL_ALCHEMY_CONN}
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=${AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=${AIRFLOW__CORE__LOAD_EXAMPLES}
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW__WEBSERVER__SECRET_KEY}
+      - AIRFLOW_UID=${AIRFLOW_UID}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+      - ./data:/opt/airflow/data
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    user: "50000:984"  # airflow:docker (use host docker group id)
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT}:8080"
+    networks:
+      - diabetes-network
+    command: webserver
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION}
+    container_name: prometheus
+    restart: always
+    ports:
+      - "${PROMETHEUS_PORT}:9090"
+    volumes:
+      - ./dashboard/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME}'
+      - '--web.enable-lifecycle'
+    networks:
+      - diabetes-network
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION}
+    container_name: grafana
+    restart: always
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=${GF_USERS_ALLOW_SIGN_UP}
+      - GF_DATABASE_TYPE=${GF_DATABASE_TYPE}
+      - GF_DATABASE_PATH=${GF_DATABASE_PATH}
+      - GF_SECURITY_SECRET_KEY=${GF_SECURITY_SECRET_KEY}
+      - GF_INSTALL_PLUGINS=${GF_INSTALL_PLUGINS}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./dashboard/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./dashboard/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - diabetes-network
+    depends_on:
+      - prometheus
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:${NODE_EXPORTER_VERSION}
+    container_name: node-exporter
+    restart: always
+    ports:
+      - "${NODE_EXPORTER_PORT}:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - diabetes-network
+
+# Volumes
+volumes:
+  hadoop_namenode:
+    driver: local
+  hadoop_datanode:
+    driver: local
+  hive_postgresql:
+    driver: local
+  airflow_postgresql:
+    driver: local
+  postgres_warehouse_data:
+    driver: local
+  nifi_data:
+    driver: local
+  nifi_logs:
+    driver: local
+  nifi_conf:
+    driver: local
+  zookeeper_data:
+    driver: local
+  zookeeper_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# Networks
+networks:
+  diabetes-network:
+    driver: bridge
+    name: ${NETWORK_NAME}

@@ -1,0 +1,286 @@
+# =============================================================================
+# DIABETES PREDICTION PIPELINE - CI/CD WORKFLOW
+# =============================================================================
+# Project: Big Data Pipeline for Diabetes Prediction
+# Team: Kelompok 8 RA
+# =============================================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  PYTHON_VERSION: '3.12'
+  SPARK_VERSION: '3.5.0'
+  HADOOP_VERSION: '3.3.4'
+
+jobs:
+  # =============================================================================
+  # SECURITY & CODE QUALITY CHECKS
+  # =============================================================================
+  security-scan:
+    name: Security & Code Quality
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install security tools
+      run: |
+        pip install bandit safety semgrep
+    
+    - name: Run Bandit Security Scan
+      run: |
+        bandit -r scripts/ -f json -o bandit-report.json || true
+        bandit -r scripts/ || true
+    
+    - name: Check Dependencies for Vulnerabilities
+      run: |
+        pip install -r docker/airflow/requirements.txt
+        safety check --json --output safety-report.json || true
+        safety check || true
+    
+    - name: Upload Security Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  # =============================================================================
+  # LINTING & CODE FORMATTING
+  # =============================================================================
+  lint:
+    name: Code Linting & Formatting
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install linting tools
+      run: |
+        pip install black flake8 isort mypy pylint
+    
+    - name: Check code formatting with Black
+      run: |
+        black --check --diff scripts/ tests/
+    
+    - name: Lint with flake8
+      run: |
+        flake8 scripts/ tests/ --max-line-length=88 --extend-ignore=E203,W503
+    
+    - name: Check import sorting with isort
+      run: |
+        isort --check-only --diff scripts/ tests/
+    
+    - name: Type checking with mypy
+      run: |
+        mypy scripts/ || true  # Allow to fail for now
+
+  # =============================================================================
+  # UNIT TESTS
+  # =============================================================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        pip install -r docker/airflow/requirements.txt
+        pip install pytest pytest-cov pytest-mock
+    
+    - name: Run unit tests
+      run: |
+        python -m pytest tests/test_unit_comprehensive.py -v --cov=scripts --cov-report=xml --cov-report=html
+    
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # =============================================================================
+  # DOCKER BUILD & VALIDATION
+  # =============================================================================
+  docker-build:
+    name: Docker Build & Validation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker images
+      run: |
+        docker compose build
+    
+    - name: Validate Docker Compose
+      run: |
+        docker compose config
+    
+    - name: Test Docker containers startup
+      run: |
+        # Test basic container startup (without full services)
+        docker compose up -d namenode datanode
+        sleep 30
+        docker compose ps
+        docker compose down
+
+  # =============================================================================
+  # INTEGRATION TESTS (Lightweight)
+  # =============================================================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [security-scan, lint, unit-tests]
+    if: github.event_name == 'push'
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        pip install -r docker/airflow/requirements.txt
+        pip install pytest pytest-mock
+    
+    - name: Create test environment file
+      run: |
+        cp .env.example .env.test
+        # Modify for CI environment
+        sed -i 's/ENVIRONMENT=development/ENVIRONMENT=test/' .env.test
+    
+    - name: Run integration tests (mock mode)
+      run: |
+        python -m pytest tests/test_integration_clean.py -v --tb=short
+      env:
+        ENVIRONMENT: test
+
+  # =============================================================================
+  # DOCUMENTATION VALIDATION
+  # =============================================================================
+  docs-validation:
+    name: Documentation Validation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check README links
+      uses: gaurav-nelson/github-action-markdown-link-check@v1
+      with:
+        use-quiet-mode: 'yes'
+        use-verbose-mode: 'yes'
+    
+    - name: Validate markdown format
+      run: |
+        # Check if all markdown files are properly formatted
+        find . -name "*.md" -not -path "./test_env/*" | xargs ls -la
+
+  # =============================================================================
+  # PERFORMANCE & LOAD TESTS
+  # =============================================================================
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[performance]')
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        pip install -r docker/airflow/requirements.txt
+        pip install pytest pytest-benchmark
+    
+    - name: Run performance tests
+      run: |
+        python -m pytest tests/test_performance.py -v --benchmark-only
+
+  # =============================================================================
+  # DEPLOYMENT VALIDATION
+  # =============================================================================
+  deployment-validation:
+    name: Deployment Validation
+    runs-on: ubuntu-latest
+    needs: [integration-tests, docker-build]
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Validate deployment configuration
+      run: |
+        python scripts/validate_env.py
+    
+    - name: Check environment templates
+      run: |
+        # Ensure .env.example is up to date
+        if [ ! -f ".env.example" ]; then
+          echo "❌ .env.example file is missing"
+          exit 1
+        fi
+        echo "✅ Environment template validation passed"
+    
+    - name: Validate project structure
+      run: |
+        python -c "
+        import os
+        required_dirs = ['data/bronze', 'data/silver', 'data/gold', 'airflow/dags', 'scripts', 'models']
+        missing = [d for d in required_dirs if not os.path.exists(d)]
+        if missing:
+            print(f'❌ Missing directories: {missing}')
+            exit(1)
+        print('✅ Project structure validation passed')
+        "
+
+  # =============================================================================
+  # NOTIFICATION & REPORTING
+  # =============================================================================
+  notify:
+    name: Notification
+    runs-on: ubuntu-latest
+    needs: [security-scan, lint, unit-tests, integration-tests, docker-build]
+    if: always()
+    steps:
+    - name: Notify on success
+      if: ${{ needs.security-scan.result == 'success' && needs.lint.result == 'success' && needs.unit-tests.result == 'success' }}
+      run: |
+        echo "✅ All checks passed successfully!"
+    
+    - name: Notify on failure
+      if: ${{ needs.security-scan.result == 'failure' || needs.lint.result == 'failure' || needs.unit-tests.result == 'failure' }}
+      run: |
+        echo "❌ Some checks failed. Please review the logs."
+        exit 1

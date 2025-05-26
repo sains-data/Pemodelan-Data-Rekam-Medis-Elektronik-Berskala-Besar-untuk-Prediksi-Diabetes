@@ -1,0 +1,3 @@
+# This file ensures that the bronze directory is tracked in Git
+# Bronze layer: Raw data ingested from various sources
+# Files in this directory are ignored by .gitignore but the directory structure is preserved

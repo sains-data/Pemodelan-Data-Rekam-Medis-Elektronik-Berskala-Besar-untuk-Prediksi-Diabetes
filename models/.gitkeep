@@ -1,0 +1,3 @@
+# This file ensures that the models directory is tracked in Git
+# Directory for storing trained ML models and artifacts
+# Large model files are ignored by .gitignore but the directory structure is preserved

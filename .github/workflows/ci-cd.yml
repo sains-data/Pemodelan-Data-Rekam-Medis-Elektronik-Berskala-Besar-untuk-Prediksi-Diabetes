@@ -1,0 +1,512 @@
+name: 🩺 Diabetes Prediction Pipeline - CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of tests to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - unit
+        - integration
+        - e2e
+        - smoke
+
+env:
+  PYTHON_VERSION: "3.9"
+  NODE_VERSION: "16"
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  # Job 1: Linting and Code Quality
+  lint-and-format:
+    name: 🔍 Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 📦 Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black isort mypy pylint
+        pip install -r docker/airflow/requirements.txt
+        pip install -r docker/spark/requirements.txt
+
+    - name: 🔍 Run Flake8
+      run: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: 🎨 Check Code Formatting (Black)
+      run: black --check --diff .
+
+    - name: 📋 Check Import Sorting (isort)
+      run: isort --check-only --diff .
+
+    - name: 🔬 Type Checking (MyPy)
+      run: mypy --ignore-missing-imports scripts/ tests/
+      continue-on-error: true
+
+    - name: 📊 Code Quality (Pylint)
+      run: pylint scripts/ tests/ --exit-zero
+      continue-on-error: true
+
+  # Job 2: Security Scanning
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 🔒 Run Security Scan (Bandit)
+      run: |
+        pip install bandit
+        bandit -r . -x tests/ -f json -o security-report.json
+      continue-on-error: true
+
+    - name: 📄 Upload Security Report
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-report
+        path: security-report.json
+
+  # Job 3: Unit Tests
+  unit-tests:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10"]
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: 📦 Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-html pytest-cov pytest-xdist
+        pip install pandas numpy requests docker
+        pip install -r docker/airflow/requirements.txt
+
+    - name: 🧪 Run Unit Tests
+      run: |
+        cd tests
+        python -m pytest -m "unit" --html=../test_reports/unit_tests.html --cov=. --cov-report=xml:../test_reports/coverage.xml
+
+    - name: 📊 Upload Coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./test_reports/coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: 📄 Upload Test Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: unit-test-reports-py${{ matrix.python-version }}
+        path: test_reports/
+
+  # Job 4: Integration Tests (with services)
+  integration-tests:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || github.event.inputs.test_type == 'integration' || github.event.inputs.test_type == 'all'
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 📦 Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-html pytest-cov
+        pip install pandas numpy requests docker docker-compose
+
+    - name: 🚀 Start Services
+      run: |
+        echo "Starting Docker services for integration tests..."
+        make validate-env
+        docker-compose up -d
+        sleep 60  # Wait for services to be ready
+
+    - name: 🏥 Health Check Services
+      run: |
+        echo "Checking service health..."
+        make health-check
+        
+    - name: 🔗 Run Integration Tests
+      env:
+        SERVICES_RUNNING: true
+      run: |
+        cd tests
+        python -m pytest -m "integration" --html=../test_reports/integration_tests.html -v
+
+    - name: 📋 Collect Service Logs
+      if: failure()
+      run: |
+        mkdir -p test_reports/logs
+        docker-compose logs > test_reports/logs/docker-compose.log
+        docker-compose ps > test_reports/logs/services-status.log
+
+    - name: 🧹 Cleanup Services
+      if: always()
+      run: |
+        docker-compose down -v
+        docker system prune -f
+
+    - name: 📄 Upload Test Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: integration-test-reports
+        path: test_reports/
+
+  # Job 5: End-to-End Tests
+  e2e-tests:
+    name: 🎯 End-to-End Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || github.event.inputs.test_type == 'e2e' || github.event.inputs.test_type == 'all'
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 📦 Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-html pytest-cov
+        pip install pandas numpy requests docker docker-compose
+
+    - name: 🚀 Complete Environment Setup
+      run: |
+        echo "Setting up complete environment for E2E tests..."
+        chmod +x setup_env.sh
+        ./setup_env.sh
+        sleep 120  # Wait longer for full pipeline to be ready
+
+    - name: 🎯 Run End-to-End Tests
+      env:
+        SERVICES_RUNNING: true
+      run: |
+        cd tests
+        python -m pytest -m "e2e" --html=../test_reports/e2e_tests.html -v --tb=long
+
+    - name: 📊 Run Performance Tests
+      run: |
+        cd tests
+        python -m pytest -m "performance" --html=../test_reports/performance_tests.html -v
+      continue-on-error: true
+
+    - name: 🧹 Cleanup
+      if: always()
+      run: |
+        make down
+        docker system prune -f
+
+    - name: 📄 Upload Test Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: e2e-test-reports
+        path: test_reports/
+
+  # Job 6: Build and Test Docker Images
+  docker-build-test:
+    name: 🐳 Docker Build & Test
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🔧 Validate Docker Compose
+      run: |
+        docker-compose config --quiet
+        echo "✅ Docker Compose configuration is valid"
+
+    - name: 🏗️ Build Docker Images
+      run: |
+        echo "Building Docker images..."
+        make build
+
+    - name: 🧪 Test Docker Services
+      run: |
+        echo "Testing Docker services startup..."
+        docker-compose up -d
+        sleep 30
+        make test-docker-services
+        docker-compose down
+
+  # Job 7: Deploy to Staging (on main branch)
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [lint-and-format, unit-tests, integration-tests, docker-build-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: staging
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🚀 Deploy to Staging Environment
+      run: |
+        echo "Deploying to staging environment..."
+        echo "This would deploy the pipeline to staging infrastructure"
+        # Add actual deployment commands here
+
+    - name: 🧪 Run Smoke Tests on Staging
+      run: |
+        echo "Running smoke tests on staging..."
+        cd tests
+        python -m pytest -m "smoke" --html=../test_reports/staging_smoke_tests.html
+
+    - name: 📄 Upload Staging Test Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: staging-test-reports
+        path: test_reports/
+
+  # Job 8: Generate Test Summary
+  test-summary:
+    name: 📊 Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, e2e-tests]
+    if: always()
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 📥 Download All Test Reports
+      uses: actions/download-artifact@v3
+      with:
+        path: all_test_reports/
+
+    - name: 📊 Generate Summary Report
+      run: |
+        echo "# 🩺 Diabetes Prediction Pipeline - Test Summary" > test_summary.md
+        echo "" >> test_summary.md
+        echo "**Build:** ${{ github.run_number }}" >> test_summary.md
+        echo "**Commit:** ${{ github.sha }}" >> test_summary.md
+        echo "**Branch:** ${{ github.ref_name }}" >> test_summary.md
+        echo "**Triggered by:** ${{ github.event_name }}" >> test_summary.md
+        echo "**Date:** $(date)" >> test_summary.md
+        echo "" >> test_summary.md
+        echo "## Test Results" >> test_summary.md
+        echo "" >> test_summary.md
+        if [ "${{ needs.unit-tests.result }}" == "success" ]; then
+          echo "✅ Unit Tests: PASSED" >> test_summary.md
+        else
+          echo "❌ Unit Tests: FAILED" >> test_summary.md
+        fi
+        if [ "${{ needs.integration-tests.result }}" == "success" ]; then
+          echo "✅ Integration Tests: PASSED" >> test_summary.md
+        else
+          echo "❌ Integration Tests: FAILED" >> test_summary.md
+        fi
+        if [ "${{ needs.e2e-tests.result }}" == "success" ]; then
+          echo "✅ End-to-End Tests: PASSED" >> test_summary.md
+        else
+          echo "❌ End-to-End Tests: FAILED" >> test_summary.md
+        fi
+        echo "" >> test_summary.md
+        echo "## Artifacts" >> test_summary.md
+        echo "- Test reports available in workflow artifacts" >> test_summary.md
+        echo "- Coverage reports included in artifacts" >> test_summary.md
+
+    - name: 📄 Upload Test Summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-summary
+        path: test_summary.md
+
+    - name: 💬 Comment PR with Results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const summary = fs.readFileSync('test_summary.md', 'utf8');
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: summary
+          });
+
+  # Job 9: Notification
+  notify:
+    name: 📢 Notify Results
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, e2e-tests, deploy-staging]
+    if: always() && (github.ref == 'refs/heads/main' || github.event_name == 'schedule')
+    steps:
+    - name: 📧 Send Notification
+      run: |
+        echo "Test pipeline completed"
+        echo "Results:"
+        echo "- Unit Tests: ${{ needs.unit-tests.result }}"
+        echo "- Integration Tests: ${{ needs.integration-tests.result }}"
+        echo "- E2E Tests: ${{ needs.e2e-tests.result }}"
+        echo "- Staging Deployment: ${{ needs.deploy-staging.result }}"
+        # Add notification logic (email, Slack, etc.) here
+
+  # Integration Tests
+  test-integration:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint-and-format]
+    
+    steps:
+    - name: 🔄 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: 📦 Install Test Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-html pytest-cov pytest-mock
+        pip install pandas numpy scikit-learn docker pyyaml requests
+        pip install -r docker/spark/requirements.txt
+        
+    - name: 🧪 Run Integration Tests
+      run: |
+        python -m pytest tests/test_integration_clean.py -v --html=reports/integration_report.html --self-contained-html
+        
+    - name: 📊 Upload Integration Test Results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: integration-test-results
+        path: reports/
+
+  # Unit Tests
+  test-unit:
+    name: 🧩 Unit Tests
+    runs-on: ubuntu-latest
+    needs: [lint-and-format]
+    
+    steps:
+    - name: 🔄 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: 📦 Install Test Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-html pytest-cov pytest-mock
+        pip install pandas numpy scikit-learn docker pyyaml requests
+        pip install -r docker/spark/requirements.txt
+        
+    - name: 🧪 Run Unit Tests with Coverage
+      run: |
+        python -m pytest tests/test_unit_comprehensive.py -v --cov=tests --cov-report=html --html=reports/unit_report.html --self-contained-html
+        
+    - name: 📊 Upload Unit Test Results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: unit-test-results
+        path: |
+          reports/
+          htmlcov/
+
+  # End-to-End Tests
+  test-e2e:
+    name: 🌐 End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [test-unit, test-integration]
+    
+    steps:
+    - name: 🔄 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: 📦 Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-html pytest-mock
+        pip install pandas numpy scikit-learn docker pyyaml requests
+        pip install -r docker/spark/requirements.txt
+        
+    - name: 🐳 Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: 🚀 Start Services for E2E Testing
+      run: |
+        docker-compose -f docker-compose.yml up -d --build
+        sleep 30  # Wait for services to start
+        
+    - name: 🧪 Run End-to-End Tests
+      run: |
+        python tests/run_tests.py --e2e --html-report
+        
+    - name: 📊 Upload E2E Test Results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: e2e-test-results
+        path: test_reports/
+        
+    - name: 🛑 Stop Services
+      if: always()
+      run: |
+        docker-compose -f docker-compose.yml down

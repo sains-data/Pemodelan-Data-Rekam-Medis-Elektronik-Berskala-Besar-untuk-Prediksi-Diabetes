@@ -1,0 +1,55 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # Spark Master metrics
+  - job_name: 'spark-master'
+    static_configs:
+      - targets: ['spark-master:8080']
+    metrics_path: '/metrics/master/prometheus'
+
+  # Spark Worker metrics
+  - job_name: 'spark-worker'
+    static_configs:
+      - targets: ['spark-worker:8081']
+    metrics_path: '/metrics/applications/prometheus'
+
+  # HDFS NameNode metrics
+  - job_name: 'hdfs-namenode'
+    static_configs:
+      - targets: ['namenode:9870']
+    metrics_path: '/jmx'
+
+  # HDFS DataNode metrics
+  - job_name: 'hdfs-datanode'
+    static_configs:
+      - targets: ['datanode:9864']
+    metrics_path: '/jmx'
+
+  # Custom application metrics (diabetes pipeline)
+  - job_name: 'diabetes-pipeline'
+    static_configs:
+      - targets: ['spark-master:4040']
+    scrape_interval: 30s
+    metrics_path: '/metrics/json'
+
+  # Airflow metrics (if exposed)
+  - job_name: 'airflow'
+    static_configs:
+      - targets: ['airflow:8080']
+    scrape_interval: 30s
