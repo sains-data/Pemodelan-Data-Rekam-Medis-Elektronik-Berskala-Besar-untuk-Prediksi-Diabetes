@@ -55,86 +55,7 @@ class PySparkModelEvaluator:
     
     def find_latest_models(self, models_base_path="/models"):
         """
-        Find the latest trained models in HDFS using PySpark
-        
-        Args:
-            models_base_path (str): Base path where models are stored
-            
-        Returns:
-            dict: Dictionary with latest model paths for each model type
-        """
-        try:
-            logger.info(f"Searching for latest models in {models_base_path}")
-            
-            # Try to use Spark to list HDFS directories
-            try:
-                # Use Spark's Hadoop FileSystem API
-                from pyspark import SparkContext
-                from pyspark.sql import SparkSession
-                
-                sc = self.spark.sparkContext
-                hadoop_conf = sc._jsc.hadoopConfiguration()
-                fs = sc._jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
-                path = sc._jvm.org.apache.hadoop.fs.Path(models_base_path)
-                
-                if not fs.exists(path):
-                    logger.warning(f"Models directory {models_base_path} does not exist")
-                    return self._get_fallback_models(models_base_path)
-                
-                # List files in the models directory
-                file_statuses = fs.listStatus(path)
-                model_paths = {}
-                latest_timestamp = None
-                
-                # Pattern to match model directories with timestamps
-                timestamp_pattern = r'(\d{8}_\d{6})$'
-                
-                for file_status in file_statuses:
-                    if file_status.isDirectory():
-                        dir_path = str(file_status.getPath())
-                        dir_name = dir_path.split('/')[-1]
-                        
-                        # Extract model type and timestamp
-                        timestamp_match = re.search(timestamp_pattern, dir_name)
-                        if timestamp_match:
-                            timestamp = timestamp_match.group(1)
-                            model_type = dir_name.replace(f'_{timestamp}', '')
-                            
-                            # Track latest timestamp
-                            if latest_timestamp is None or timestamp > latest_timestamp:
-                                latest_timestamp = timestamp
-                            
-                            # Store model info
-                            if model_type not in model_paths or timestamp > model_paths[model_type]['timestamp']:
-                                model_paths[model_type] = {
-                                    'path': f"hdfs://namenode:9000{dir_path}",
-                                    'timestamp': timestamp
-                                }
-                
-                # Filter to only include models with the latest timestamp
-                latest_models = {}
-                for model_type, info in model_paths.items():
-                    if info['timestamp'] == latest_timestamp:
-                        latest_models[model_type] = info['path']
-                
-                if latest_models:
-                    logger.info(f"Found latest models with timestamp {latest_timestamp}: {list(latest_models.keys())}")
-                    return latest_models
-                else:
-                    logger.warning("No models found using Spark FileSystem API")
-                    return self._get_fallback_models(models_base_path)
-                    
-            except Exception as spark_error:
-                logger.warning(f"Spark FileSystem API failed: {spark_error}")
-                return self._try_subprocess_approach(models_base_path)
-                
-        except Exception as e:
-            logger.error(f"Failed to find latest models: {e}")
-            return self._get_fallback_models(models_base_path)
-    
-    def _try_subprocess_approach(self, models_base_path):
-        """
-        Fallback to subprocess approach for listing HDFS directories
+        Find the latest trained models in HDFS
         
         Args:
             models_base_path (str): Base path where models are stored
@@ -144,16 +65,13 @@ class PySparkModelEvaluator:
         """
         try:
             import subprocess
+            import re
             
-            logger.info("Trying subprocess approach for HDFS listing...")
+            logger.info(f"Searching for latest models in {models_base_path}")
             
             # Use hdfs command to list models directory
             cmd = ["hdfs", "dfs", "-ls", models_base_path]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            
-            if result.returncode != 0:
-                logger.warning(f"HDFS command failed: {result.stderr}")
-                return self._get_fallback_models(models_base_path)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             
             # Parse the output to find model directories
             model_paths = {}
@@ -166,7 +84,7 @@ class PySparkModelEvaluator:
                 match = re.search(pattern, line)
                 if match:
                     relative_path = match.group(1)
-                    full_path = f"hdfs://namenode:9000{relative_path}"
+                    full_path = f"hdfs://namenode:9000{relative_path}"  # Add HDFS prefix
                     model_type = match.group(2)
                     timestamp = match.group(3)
                     
@@ -175,11 +93,12 @@ class PySparkModelEvaluator:
                         latest_timestamp = timestamp
                     
                     # Store the path for each model type with this timestamp
-                    if model_type not in model_paths or timestamp > model_paths[model_type]['timestamp']:
-                        model_paths[model_type] = {
-                            'path': full_path,
-                            'timestamp': timestamp
-                        }
+                    if timestamp == latest_timestamp or model_type not in model_paths:
+                        if model_type not in model_paths or timestamp > model_paths[model_type]['timestamp']:
+                            model_paths[model_type] = {
+                                'path': full_path,
+                                'timestamp': timestamp
+                            }
             
             # Filter to only include models with the latest timestamp
             latest_models = {}
@@ -187,71 +106,21 @@ class PySparkModelEvaluator:
                 if info['timestamp'] == latest_timestamp:
                     latest_models[model_type] = info['path']
             
-            if latest_models:
-                logger.info(f"Found latest models with timestamp {latest_timestamp}: {list(latest_models.keys())}")
-                return latest_models
-            else:
-                logger.warning("No models found using subprocess approach")
-                return self._get_fallback_models(models_base_path)
-                
-        except Exception as e:
-            logger.warning(f"Subprocess approach failed: {e}")
-            return self._get_fallback_models(models_base_path)
-    
-    def _get_fallback_models(self, models_base_path):
-        """
-        Fallback model paths when auto-detection fails
-        
-        Args:
-            models_base_path (str): Base path where models are stored
+            logger.info(f"Found latest models with timestamp {latest_timestamp}: {list(latest_models.keys())}")
+            return latest_models
             
-        Returns:
-            dict: Dictionary with fallback model paths
-        """
-        logger.info("Using fallback model paths")
-        
-        # Generate current timestamp-based fallback paths
-        current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        fallback_models = {
-            'random_forest': f"hdfs://namenode:9000{models_base_path}/random_forest_latest",
-            'logistic_regression': f"hdfs://namenode:9000{models_base_path}/logistic_regression_latest",
-            'feature_pipeline': f"hdfs://namenode:9000{models_base_path}/feature_pipeline_latest"
-        }
-        
-        # Try to find any existing model directories
-        try:
-            import subprocess
-            result = subprocess.run(["hdfs", "dfs", "-ls", models_base_path], 
-                                  capture_output=True, text=True, timeout=15)
-            
-            if result.returncode == 0:
-                # Parse available models
-                for line in result.stdout.split('\n'):
-                    if 'random_forest' in line and models_base_path in line:
-                        path_match = re.search(r'(/models/random_forest_[\w\d_]+)', line)
-                        if path_match:
-                            fallback_models['random_forest'] = f"hdfs://namenode:9000{path_match.group(1)}"
-                    
-                    if 'logistic_regression' in line and models_base_path in line:
-                        path_match = re.search(r'(/models/logistic_regression_[\w\d_]+)', line)
-                        if path_match:
-                            fallback_models['logistic_regression'] = f"hdfs://namenode:9000{path_match.group(1)}"
-                            
-                    if 'feature_pipeline' in line and models_base_path in line:
-                        path_match = re.search(r'(/models/feature_pipeline_[\w\d_]+)', line)
-                        if path_match:
-                            fallback_models['feature_pipeline'] = f"hdfs://namenode:9000{path_match.group(1)}"
-                            
         except Exception as e:
-            logger.warning(f"Fallback model detection failed: {e}")
-        
-        logger.info(f"Using fallback models: {list(fallback_models.keys())}")
-        return fallback_models
+            logger.error(f"Failed to find latest models: {e}")
+            # Fallback to manual paths if automatic detection fails
+            return {
+                'random_forest': f"hdfs://namenode:9000{models_base_path}/random_forest_20250526_235657",
+                'logistic_regression': f"hdfs://namenode:9000{models_base_path}/logistic_regression_20250526_235657",
+                'feature_pipeline': f"hdfs://namenode:9000{models_base_path}/feature_pipeline_20250526_235657"
+            }
     
     def load_model(self, model_path):
         """
-        Load trained model from HDFS with improved error handling
+        Load trained model from HDFS
         
         Args:
             model_path (str): Path to saved model
@@ -262,79 +131,39 @@ class PySparkModelEvaluator:
         try:
             logger.info(f"Loading model from {model_path}")
             
-            # Import model types
-            from pyspark.ml.classification import RandomForestClassificationModel, LogisticRegressionModel
-            
-            # Determine model type from path and try to load accordingly
-            if 'random_forest' in model_path.lower():
-                try:
-                    model = RandomForestClassificationModel.load(model_path)
-                    logger.info("Model loaded successfully as RandomForestClassificationModel")
-                    return model
-                except Exception as rf_error:
-                    logger.warning(f"Failed to load as RandomForest: {rf_error}")
-            
-            elif 'logistic_regression' in model_path.lower():
-                try:
-                    model = LogisticRegressionModel.load(model_path)
-                    logger.info("Model loaded successfully as LogisticRegressionModel")
-                    return model
-                except Exception as lr_error:
-                    logger.warning(f"Failed to load as LogisticRegression: {lr_error}")
-            
-            # If specific model type loading failed, try PipelineModel
+            # First try to load as PipelineModel
             try:
                 model = PipelineModel.load(model_path)
                 logger.info("Model loaded successfully as PipelineModel")
                 return model
             except Exception as pipeline_error:
-                logger.warning(f"Failed to load as PipelineModel: {pipeline_error}")
+                logger.info(f"Failed to load as PipelineModel: {pipeline_error}")
                 
-                # Try all model types as a last resort
+                # Try to load as individual classifier models
+                from pyspark.ml.classification import RandomForestClassificationModel, LogisticRegressionModel
+                
                 try:
                     model = RandomForestClassificationModel.load(model_path)
-                    logger.info("Model loaded successfully as RandomForestClassificationModel (fallback)")
+                    logger.info("Model loaded successfully as RandomForestClassificationModel")
                     return model
-                except Exception:
-                    pass
-                
-                try:
-                    model = LogisticRegressionModel.load(model_path)
-                    logger.info("Model loaded successfully as LogisticRegressionModel (fallback)")
-                    return model
-                except Exception:
-                    pass
-                
-                # Import more model types to try
-                try:
-                    from pyspark.ml.classification import GBTClassificationModel, DecisionTreeClassificationModel
+                except Exception as rf_error:
+                    logger.info(f"Failed to load as RandomForest: {rf_error}")
                     
                     try:
-                        model = GBTClassificationModel.load(model_path)
-                        logger.info("Model loaded successfully as GBTClassificationModel")
+                        model = LogisticRegressionModel.load(model_path)
+                        logger.info("Model loaded successfully as LogisticRegressionModel")
                         return model
-                    except Exception:
-                        pass
+                    except Exception as lr_error:
+                        logger.error(f"Failed to load as LogisticRegression: {lr_error}")
+                        raise Exception(f"Could not load model as any supported type. Pipeline error: {pipeline_error}, RF error: {rf_error}, LR error: {lr_error}")
                         
-                    try:
-                        model = DecisionTreeClassificationModel.load(model_path)
-                        logger.info("Model loaded successfully as DecisionTreeClassificationModel")
-                        return model
-                    except Exception:
-                        pass
-                except ImportError:
-                    pass
-                
-                # Failed to load with all model types
-                raise Exception(f"Could not load model as any supported type from {model_path}")
-        
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             raise
     
     def load_test_data(self, test_data_path):
         """
-        Load test data from HDFS with improved error handling
+        Load test data from HDFS
         
         Args:
             test_data_path (str): Path to test data
@@ -344,41 +173,16 @@ class PySparkModelEvaluator:
         """
         try:
             logger.info(f"Loading test data from {test_data_path}")
-            
-            # Try different possible data formats and paths
-            possible_paths = [
-                test_data_path,
-                f"{test_data_path}/diabetes_gold.parquet",
-                f"{test_data_path}/*.parquet",
-                f"{test_data_path}/part-*.parquet"
-            ]
-            
-            for path in possible_paths:
-                try:
-                    df = self.spark.read.parquet(path)
-                    logger.info(f"Test data loaded from {path}: {df.count()} records")
-                    return df
-                except Exception as e:
-                    logger.debug(f"Failed to load from {path}: {e}")
-                    continue
-            
-            # If parquet fails, try other formats
-            try:
-                df = self.spark.read.format("delta").load(test_data_path)
-                logger.info(f"Test data loaded as Delta: {df.count()} records")
-                return df
-            except Exception:
-                pass
-                
-            raise Exception(f"Could not load test data from any attempted path")
-            
+            df = self.spark.read.parquet(test_data_path)
+            logger.info(f"Test data loaded: {df.count()} records")
+            return df
         except Exception as e:
             logger.error(f"Failed to load test data: {e}")
             raise
     
     def make_predictions(self, model, test_data, model_path):
         """
-        Generate predictions using the model with improved pipeline handling
+        Generate predictions using the model
         
         Args:
             model: Trained model (PipelineModel or individual classifier)
@@ -391,14 +195,6 @@ class PySparkModelEvaluator:
         try:
             logger.info("Generating predictions...")
             
-            # Check if data has the expected target column name
-            if 'diabetes' not in test_data.columns and 'label' in test_data.columns:
-                # Rename label to diabetes for consistency
-                test_data = test_data.withColumnRenamed('label', 'diabetes')
-                logger.info("Renamed 'label' column to 'diabetes' for consistency")
-            elif 'diabetes' not in test_data.columns and 'label' not in test_data.columns:
-                logger.warning("Neither 'diabetes' nor 'label' columns found in test data")
-            
             # Check if this is a PipelineModel or individual classifier
             from pyspark.ml import PipelineModel
             from pyspark.ml.classification import RandomForestClassificationModel, LogisticRegressionModel
@@ -406,117 +202,42 @@ class PySparkModelEvaluator:
             if isinstance(model, PipelineModel):
                 # For pipeline models, use transform directly
                 predictions = model.transform(test_data)
-                logger.info("Used PipelineModel for predictions")
             else:
                 # For individual classifiers, we need to apply feature engineering first
                 logger.info("Individual classifier detected - applying feature engineering...")
                 
-                # Try to find feature pipeline
-                feature_pipeline = None
-                
-                # Try loading from "_latest" suffixed path first
-                feature_pipeline_paths = [
-                    # Modern path approach
-                    "/models/feature_pipeline_latest"
-                ]
-                
-                # Also try timestamp-based approach as fallback
-                timestamp_match = re.search(r'(\d{8}_\d{6})', model_path)
+                # Extract timestamp from model path
+                import re
+                timestamp_match = re.search(r'(\d{8}_\d{6})$', model_path)
                 if timestamp_match:
                     timestamp = timestamp_match.group(1)
-                    feature_pipeline_paths.extend([
-                        f"/models/feature_pipeline_{timestamp}",
-                    ])
-                
-                # Add HDFS prefix to paths
-                feature_pipeline_paths = [f"hdfs://namenode:9000{p}" for p in feature_pipeline_paths]
-                
-                # Try each path
-                for fp_path in feature_pipeline_paths:
+                    feature_pipeline_path = f"hdfs://namenode:9000/models/feature_pipeline_{timestamp}"
+                    
                     try:
-                        logger.info(f"Trying to load feature pipeline from: {fp_path}")
-                        feature_pipeline = PipelineModel.load(fp_path)
-                        logger.info(f"Loaded feature pipeline from {fp_path}")
-                        break
-                    except Exception as fp_error:
-                        logger.warning(f"Could not load feature pipeline from {fp_path}: {fp_error}")
-                        continue
-                
-                if feature_pipeline:
-                    # Apply feature pipeline first
-                    try:
+                        feature_pipeline = PipelineModel.load(feature_pipeline_path)
+                        logger.info(f"Loaded feature pipeline from {feature_pipeline_path}")
+                        
+                        # Apply feature pipeline first
                         prepared_data = feature_pipeline.transform(test_data)
+                        
+                        # Then apply the classifier
                         predictions = model.transform(prepared_data)
-                        logger.info("Applied feature pipeline before prediction")
-                    except Exception as transform_error:
-                        logger.error(f"Error during transform with feature pipeline: {transform_error}")
-                        
-                        # Try direct prediction with scaled_features if available
-                        if 'scaled_features' in test_data.columns:
-                            try:
-                                logger.info("Attempting predictions using existing 'scaled_features'")
-                                predictions = model.transform(test_data)
-                            except Exception:
-                                # Try with features column
-                                if 'features' in test_data.columns:
-                                    logger.info("Attempting predictions using existing 'features'")
-                                    predictions = model.transform(test_data)
-                                else:
-                                    raise Exception("Failed to generate predictions: no usable feature columns")
-                        elif 'features' in test_data.columns:
-                            logger.info("Attempting predictions using existing 'features' column")
-                            predictions = model.transform(test_data)
-                        else:
-                            logger.error("Cannot make predictions: no feature columns found and pipeline failed")
-                            raise Exception("Cannot apply model: no feature columns and feature pipeline failed")
+                    except Exception as fp_error:
+                        logger.warning(f"Could not load feature pipeline: {fp_error}")
+                        logger.info("Attempting direct prediction without feature pipeline...")
+                        predictions = model.transform(test_data)
                 else:
-                    # Try direct prediction if features are available
-                    logger.warning("No feature pipeline found - attempting direct prediction")
-                    if 'scaled_features' in test_data.columns:
-                        logger.info("Using existing 'scaled_features' column")
-                        predictions = model.transform(test_data)
-                    elif 'features' in test_data.columns:
-                        logger.info("Using existing 'features' column")
-                        predictions = model.transform(test_data)
-                    else:
-                        # Last resort - try to create features on the fly
-                        logger.warning("No feature columns found - attempting to create features")
-                        from pyspark.ml.feature import VectorAssembler
-                        
-                        # Get all numeric columns
-                        numeric_cols = [col_name for col_name, dtype in test_data.dtypes 
-                                      if dtype in ['int', 'double', 'float', 'long', 'short', 'bigint'] 
-                                      and col_name != 'diabetes' and col_name != 'label']
-                        
-                        if numeric_cols:
-                            # Create features vector
-                            logger.info(f"Creating features from numeric columns: {numeric_cols}")
-                            assembler = VectorAssembler(inputCols=numeric_cols, outputCol="features")
-                            with_features = assembler.transform(test_data)
-                            predictions = model.transform(with_features)
-                        else:
-                            raise Exception("No numeric columns found to create features")
+                    logger.warning("Could not extract timestamp from model path")
+                    logger.info("Attempting direct prediction without feature pipeline...")
+                    predictions = model.transform(test_data)
             
-            # Check for required columns - add them if they are missing
-            required_columns = ['diabetes', 'prediction']
-            col_mapping = {'label': 'diabetes', 'prediction': 'prediction'}
-            
-            for req_col, actual_col in col_mapping.items():
-                if actual_col not in predictions.columns and req_col in predictions.columns:
-                    predictions = predictions.withColumnRenamed(req_col, actual_col)
-                    logger.info(f"Renamed '{req_col}' to '{actual_col}' for consistency")
-            
-            # Count predictions
-            pred_count = predictions.count()
-            logger.info(f"Predictions generated for {pred_count} records")
-            
+            logger.info(f"Predictions generated for {predictions.count()} records")
             return predictions
             
         except Exception as e:
             logger.error(f"Failed to generate predictions: {e}")
             raise
     
-    # ...existing code... (keep all other methods unchanged)
     def calculate_metrics(self, predictions):
         """
         Calculate comprehensive evaluation metrics using PySpark
@@ -891,22 +612,18 @@ def main():
         # Initialize evaluator
         evaluator = PySparkModelEvaluator(spark)
         
-        # Determine model path
-        if args.model_path:
-            model_path = args.model_path
-            logger.info(f"Using provided model path: {model_path}")
+
+        # Auto-detect latest models
+        logger.info("Auto-detecting latest models...")
+        latest_models = evaluator.find_latest_models()
+        
+        if args.model_type in latest_models:
+            model_path = latest_models[args.model_type]
+            logger.info(f"Auto-detected latest {args.model_type} model: {model_path}")
         else:
-            # Auto-detect latest models
-            logger.info("Auto-detecting latest models...")
-            latest_models = evaluator.find_latest_models()
-            
-            if args.model_type in latest_models:
-                model_path = latest_models[args.model_type]
-                logger.info(f"Auto-detected latest {args.model_type} model: {model_path}")
-            else:
-                logger.error(f"Could not find latest {args.model_type} model")
-                logger.info(f"Available models: {list(latest_models.keys())}")
-                sys.exit(1)
+            logger.error(f"Could not find latest {args.model_type} model")
+            logger.info(f"Available models: {list(latest_models.keys())}")
+            sys.exit(1)
         
         # Generate comprehensive evaluation report
         report = evaluator.generate_comprehensive_report(

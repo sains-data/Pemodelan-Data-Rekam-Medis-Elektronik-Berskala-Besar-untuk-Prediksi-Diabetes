@@ -141,6 +141,33 @@ feature_engineering = BashOperator(
 )
 
 # Task 6: Model Training (Airflow Container)
+def train_model_in_airflow():
+    """Train diabetes prediction model in Airflow container"""
+    import subprocess
+    import os
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Make sure models directory exists
+    os.makedirs('/opt/airflow/models', exist_ok=True)
+    
+    # Run the training script
+    cmd = [
+        'python3', 
+        '/opt/airflow/scripts/ml/train_model_airflow.py', 
+        '--model-type', 'randomforest'
+    ]
+    
+    logger.info(f"Running command: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        logger.error(f"Training failed with error: {result.stderr}")
+        raise Exception(f"Model training failed: {result.stderr}")
+    
+    logger.info(f"Training output: {result.stdout}")
+    return "Model training completed successfully"
 
 model_training = BashOperator(
     task_id='train_diabetes_prediction_model',
@@ -174,6 +201,7 @@ model_evaluation = BashOperator(
         /opt/airflow/scripts/ml/evaluate_model_pyspark.py \
         --test-data-path hdfs://namenode:9000/data/gold/ \
         --metrics-output-path hdfs://namenode:9000/metrics/ \
+        --model-type random_forest
     """,
     dag=dag
 )
